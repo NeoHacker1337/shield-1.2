@@ -1,0 +1,150 @@
+import { StyleSheet, Dimensions } from 'react-native';
+import { Colors, Fonts, Spacing } from './theme';
+
+const { height: screenHeight } = Dimensions.get('window');
+
+export default StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: Colors.backgroundDark,
+  },
+  mainContent: {
+    flex: 1,
+    backgroundColor: Colors.backgroundDark,
+  },
+  drawerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    zIndex: 98,
+  },
+  drawerContainer: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: Colors.backgroundInput,
+    zIndex: 99,
+    borderRightWidth: 1,
+    borderRightColor: Colors.borderLight,
+    elevation: 12,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 4, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+  },
+  menuButton: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    zIndex: 10,
+    padding: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 12,
+  },
+  contentContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 40,
+    minHeight: screenHeight,
+  },
+  headerTitle: {
+    color: Colors.textPrimary,
+    fontSize: Fonts.size.xl,
+    fontWeight: Fonts.weight.bold,
+    marginBottom: Spacing.lg,
+    textAlign: 'center',
+    fontFamily: Fonts.family.primary,
+  },
+  section: {
+    marginBottom: Spacing.xl,
+  },
+  sectionTitle: {
+    color: Colors.textSecondary,
+    fontSize: Fonts.size.lg,
+    fontWeight: Fonts.weight.bold,
+    marginBottom: Spacing.md,
+    fontFamily: Fonts.family.primary,
+  },
+  securityCards: {
+    gap: Spacing.sm,
+  },
+  securityCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.backgroundCard,
+    borderRadius: 16,
+    padding: Spacing.lg,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  securityText: {
+    flex: 1,
+    marginLeft: Spacing.md,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  securityTitle: {
+    color: Colors.textPrimary,
+    fontSize: Fonts.size.md,
+    fontWeight: Fonts.weight.medium,
+    fontFamily: Fonts.family.primary,
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  toggleText: {
+    color: Colors.textSecondary,
+    fontSize: Fonts.size.sm,
+    fontWeight: Fonts.weight.medium,
+    marginRight: 10,
+    fontFamily: Fonts.family.primary,
+  },
+  toggleSwitch: {
+    width: 56,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    padding: 3,
+  },
+  toggleOn: {
+    backgroundColor: Colors.primary,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+  toggleOnAppIcon: {
+    backgroundColor: Colors.warning,
+    shadowColor: Colors.warning,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+  toggleOff: {
+    backgroundColor: Colors.backgroundDark,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+  },
+  toggleKnob: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: Colors.textPrimary,
+  },
+  knobOn: {
+    transform: [{ translateX: 23 }],
+  },
+  knobOff: {
+    transform: [{ translateX: 0 }],
+    backgroundColor: Colors.textSecondary,
+  },
+});
