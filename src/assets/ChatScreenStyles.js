@@ -16,10 +16,10 @@ const styles = StyleSheet.create({
   },
 
   chatContainer: {
-  flex: 1,
-  backgroundColor: '#ECE5DD',
-  paddingHorizontal: 6,
-},
+    flex: 1,
+    backgroundColor: '#ECE5DD',
+    paddingHorizontal: 6,
+  },
 
   loadingContainer: {
     flex: 1,
@@ -154,26 +154,26 @@ const styles = StyleSheet.create({
   },
 
   messageContainer: {
-  marginVertical: 4,
-  paddingHorizontal: 12,
-  paddingVertical: 8,
-  borderRadius: 12,
-  maxWidth: '80%',
-},
+    marginVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    maxWidth: '80%',
+  },
 
-currentUserMessageContainer: {
-  alignSelf: 'flex-end',
-  backgroundColor: '#DCF8C6',
-  borderTopRightRadius: 0,
-},
+  currentUserMessageContainer: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#DCF8C6',
+    borderTopRightRadius: 0,
+  },
 
-otherUserMessageContainer: {
-  alignSelf: 'flex-start',
-  backgroundColor: '#FFFFFF',
-  borderTopLeftRadius: 0,
-},
- 
-  
+  otherUserMessageContainer: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 0,
+  },
+
+
   sendingMessageContainer: {
     opacity: 0.7,
   },
@@ -967,16 +967,90 @@ otherUserMessageContainer: {
     width: '100%',
     height: '80%',
   },
-recordingContainer: {
-  backgroundColor: '#ffe6e6',
-  padding: 8,
-  alignItems: 'center',
-},
+  recordingContainer: {
+    backgroundColor: '#ffe6e6',
+    padding: 8,
+    alignItems: 'center',
+  },
 
-recordingText: {
-  color: '#e53935',
-  fontWeight: '600',
-},
+  recordingText: {
+    color: '#e53935',
+    fontWeight: '600',
+  },
+
+  // ─────────────────────────────────────────────
+  // AUDIO RECORDING BAR STYLES
+  // ─────────────────────────────────────────────
+
+  recordingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E1E1E1',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    minHeight: 56,
+  },
+
+  recordingCancelBtn: {
+    padding: 8,
+    marginRight: 6,
+    alignSelf: 'center',
+  },
+
+  recordingIndicatorRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF5F5',
+    borderRadius: 21,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    minHeight: 42,
+    borderWidth: 1,
+    borderColor: '#FFCCCC',
+    marginHorizontal: 4,
+  },
+
+  recordingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#e53935',
+    marginRight: 8,
+  },
+
+  recordingText: {
+    color: '#e53935',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+
+  recordingTimer: {
+    color: '#333',
+    fontWeight: '700',
+    fontSize: 15,
+    marginLeft: 8,
+  },
+
+  recordingSendBtn: {
+    backgroundColor: '#25D366',
+    borderRadius: 24,
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 6,
+    alignSelf: 'flex-end',
+    marginBottom: 4,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+  },
+
 });
 
 export default styles;
