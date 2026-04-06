@@ -143,11 +143,11 @@ const FileLockerScreen = ({ navigation }) => {
 
   useEffect(() => {
     const init = async () => {
-      console.log("🚀 INIT START");
+       
 
       try {
         await loadDirectory(ROOT_DIRECTORY);
-        console.log("✅ loadDirectory called");
+        
       } catch (e) {
         console.log("❌ INIT ERROR:", e);
       }

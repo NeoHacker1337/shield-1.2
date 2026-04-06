@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+// FIXME: Replace with your actual audio library
 import { useSound } from 'react-native-nitro-sound';
 import styles from '../../assets/ChatScreenStyles';
 
@@ -25,7 +26,7 @@ const WAVEFORM = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AUDIO PLAYER STYLES — defined BEFORE AudioPlayer to avoid ReferenceError
+// AUDIO PLAYER STYLES
 // ─────────────────────────────────────────────────────────────────────────────
 const audioPlayerStyles = {
   wrapper: {
@@ -109,23 +110,19 @@ const audioPlayerStyles = {
 // ─────────────────────────────────────────────────────────────────────────────
 // AUDIO PLAYER COMPONENT
 //
-// FIXES APPLIED:
-//   1. Removed broken preload useEffect (caused infinite loop + stale closure
-//      + false "file not found" errors on valid files)
-//   2. Removed localDuration state (preload remnant)
-//   3. Added initialDuration prop — pass item.duration (seconds from server)
-//      so timer shows before first play
-//   4. rawDuration/rawPosition use > 0 guard instead of || to handle -1
-//      returned by Android MediaPlayer when metadata is missing
-//   5. lastDurationRef persists duration across stop/reset cycles
-//   6. Styles defined before component (no ReferenceError)
+// CRITICAL FIXES:
+// 1. Properly persists duration from async library metadata
+// 2. Handles unit conversion (library may return ms or seconds)
+// 3. Syncs ref when initialDuration prop updates
+// 4. Robust play/pause logic for replay scenarios
+// 5. Shows "0:00" instead of "--:--" when duration is truly unknown
 // ─────────────────────────────────────────────────────────────────────────────
 const AudioPlayer = ({
   fileUrl,
   ownMessage,
   messageTime,
   renderStatusFn,
-  initialDuration = 0,   // seconds from server (item.duration)
+  initialDuration = 0, // seconds from server
 }) => {
   const {
     state,
@@ -134,75 +131,114 @@ const AudioPlayer = ({
     resumePlayer,
     stopPlayer,
     seekToPlayer,
-  } = useSound({ subscriptionDuration: 0.1 }); // 100 ms position updates
+  } = useSound({ subscriptionDuration: 0.1 });
 
-  const [isPlaying,   setIsPlaying]   = useState(false);
-  const [hasStarted,  setHasStarted]  = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
-  const [hasError,    setHasError]    = useState(false);
+  const [hasError, setHasError] = useState(false);
 
   const waveWidth = useRef(0);
 
-  // initialDuration from server is in seconds → convert to ms once at mount
+  // Convert initialDuration (seconds) to milliseconds
   const lastDurationRef = useRef(initialDuration > 0 ? initialDuration * 1000 : 0);
 
-  // Safe state extraction — treat -1 (Android MediaPlayer unknown) same as 0
-  const rawDuration    = (state?.duration        > 0) ? state.duration        : 0;
-  const rawPosition    = (state?.currentPosition > 0) ? state.currentPosition : 0;
+  // CRITICAL: Sync ref when initialDuration changes (e.g., message updates)
+  useEffect(() => {
+    if (initialDuration > 0) {
+      lastDurationRef.current = initialDuration * 1000;
+    }
+  }, [initialDuration]);
 
-  // Persist the best duration we have ever seen (survives stop/reset)
-  if (rawDuration > 0) {
-    lastDurationRef.current = rawDuration;
-  }
+  // ── SAFE STATE EXTRACTION ────────────────────────────────────────────────
+  const rawDuration = state?.duration; // Library may return ms or seconds
+  const rawPosition = state?.currentPosition;
 
-  const duration        = lastDurationRef.current || rawDuration;
-  const currentPosition = rawPosition;
-  const progress        = duration > 0 ? Math.min(currentPosition / duration, 1) : 0;
+  // CRITICAL: Persist valid duration with unit normalization
+  useEffect(() => {
+    if (typeof rawDuration === 'number' && rawDuration > 0) {
+      // Normalize to milliseconds (assume < 1000 is seconds)
+      const normalizedDuration = rawDuration < 1000 ? rawDuration * 1000 : rawDuration;
+      lastDurationRef.current = normalizedDuration;
+    }
+  }, [rawDuration]);
 
-  // Format ms → m:ss
+  // Calculate final duration (prioritize persisted value)
+  const duration = (() => {
+    if (lastDurationRef.current > 0) return lastDurationRef.current;
+    if (typeof rawDuration === 'number' && rawDuration > 0) {
+      return rawDuration < 1000 ? rawDuration * 1000 : rawDuration;
+    }
+    return 0;
+  })();
+
+  const currentPosition = (() => {
+    if (typeof rawPosition === 'number' && rawPosition > 0) {
+      return rawPosition < 1000 ? rawPosition * 1000 : rawPosition;
+    }
+    return 0;
+  })();
+
+  const progress = duration > 0 ? Math.min(currentPosition / duration, 1) : 0;
+
+  // ── FORMAT HELPER ────────────────────────────────────────────────────────
   const fmt = (ms) => {
-    if (!ms || ms <= 0) return '0:00';
+    if (!ms || isNaN(ms) || ms <= 0) return '0:00';
     const totalSec = Math.floor(ms / 1000);
     const m = Math.floor(totalSec / 60);
     const s = (totalSec % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
   };
 
-  // Timer display logic
+  // ── TIMER DISPLAY LOGIC ────────────────────────────────────────────────
   const displayTime =
     hasStarted && currentPosition > 0
-      ? `${fmt(currentPosition)} / ${fmt(duration)}`  // "0:05 / 0:23" while playing
+      ? `${fmt(currentPosition)} / ${fmt(duration)}`
       : duration > 0
-        ? fmt(duration)                                // "0:23" idle/ended
-        : '--:--';                                     // unknown before first play
+      ? fmt(duration)
+      : '0:00'; // Changed from '--:--' to show 0:00 when unknown
 
-  // ── Detect playback ended ───────────────────────────────────────────────
+  // ── DETECT PLAYBACK ENDED ────────────────────────────────────────────────
   useEffect(() => {
     if (
       isPlaying &&
       duration > 0 &&
       currentPosition > 0 &&
-      currentPosition >= duration - 400   // 400 ms buffer
+      currentPosition >= duration * 0.99 // Changed to 99% threshold
     ) {
       setIsPlaying(false);
       stopPlayer().catch(() => {});
     }
   }, [currentPosition, duration, isPlaying]);
 
-  // ── Cleanup on unmount ──────────────────────────────────────────────────
+  // ── CLEANUP ON UNMOUNT ────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       stopPlayer().catch(() => {});
+      setHasStarted(false);
+      setIsPlaying(false);
     };
-  }, []);
+  }, [stopPlayer]);
 
-  // ── Play / Pause handler ────────────────────────────────────────────────
+  // ── PLAY / PAUSE HANDLER ────────────────────────────────────────────────
   const handlePlayPause = useCallback(async () => {
     if (!isPlaying) {
-      if (!hasStarted || currentPosition <= 0) {
-        // First play OR replay after audio ended
+      // Resume from pause
+      if (hasStarted && currentPosition > 0 && currentPosition < duration) {
+        try {
+          await resumePlayer();
+          setIsPlaying(true);
+        } catch (e) {
+          console.error('Resume error:', e);
+        }
+      } else {
+        // First play or restart after completion
         setIsBuffering(true);
         try {
+          // Reset if restarting
+          if (hasStarted) {
+            await stopPlayer();
+          }
           await startPlayer(fileUrl);
           setHasStarted(true);
           setIsPlaying(true);
@@ -212,16 +248,9 @@ const AudioPlayer = ({
         } finally {
           setIsBuffering(false);
         }
-      } else {
-        // Resume from pause — no loader needed
-        try {
-          await resumePlayer();
-          setIsPlaying(true);
-        } catch (e) {
-          console.error('Resume error:', e);
-        }
       }
     } else {
+      // Pause
       try {
         await pausePlayer();
         setIsPlaying(false);
@@ -229,26 +258,39 @@ const AudioPlayer = ({
         console.error('Pause error:', e);
       }
     }
-  }, [isPlaying, hasStarted, currentPosition, fileUrl, startPlayer, resumePlayer, pausePlayer]);
+  }, [
+    isPlaying,
+    hasStarted,
+    currentPosition,
+    duration,
+    fileUrl,
+    startPlayer,
+    resumePlayer,
+    pausePlayer,
+    stopPlayer,
+  ]);
 
-  // ── Seek by tapping waveform ────────────────────────────────────────────
-  const handleWaveformPress = useCallback(async (evt) => {
-    if (waveWidth.current === 0 || duration === 0) return;
-    const tapX   = evt.nativeEvent.locationX;
-    const ratio  = Math.max(0, Math.min(tapX / waveWidth.current, 1));
-    const seekMs = Math.floor(ratio * duration);
-    try {
-      await seekToPlayer(seekMs);
-    } catch (e) {
-      console.error('Seek error:', e);
-    }
-  }, [duration, seekToPlayer]);
+  // ── SEEK BY TAPPING WAVEFORM ────────────────────────────────────────────
+  const handleWaveformPress = useCallback(
+    async (evt) => {
+      if (waveWidth.current === 0 || duration === 0) return;
+      const tapX = evt.nativeEvent.locationX;
+      const ratio = Math.max(0, Math.min(tapX / waveWidth.current, 1));
+      const seekMs = Math.floor(ratio * duration);
+      try {
+        await seekToPlayer(seekMs);
+      } catch (e) {
+        console.error('Seek error:', e);
+      }
+    },
+    [duration, seekToPlayer]
+  );
 
-  const activeBar   = ownMessage ? '#075E54' : '#25D366';
+  const activeBar = ownMessage ? '#075E54' : '#25D366';
   const inactiveBar = ownMessage ? 'rgba(7,94,84,0.25)' : 'rgba(37,211,102,0.25)';
-  const timeColor   = '#667781';
+  const timeColor = '#667781';
 
-  // ── Error state ─────────────────────────────────────────────────────────
+  // ── ERROR STATE ──────────────────────────────────────────────────────────
   if (hasError) {
     return (
       <View style={audioPlayerStyles.errorWrapper}>
@@ -258,11 +300,10 @@ const AudioPlayer = ({
     );
   }
 
-  // ── Main render ──────────────────────────────────────────────────────────
+  // ── MAIN RENDER ──────────────────────────────────────────────────────────
   return (
     <View style={audioPlayerStyles.wrapper}>
       <View style={audioPlayerStyles.row}>
-
         {/* Play / Pause button */}
         <TouchableOpacity
           onPress={handlePlayPause}
@@ -286,7 +327,9 @@ const AudioPlayer = ({
           <TouchableOpacity
             activeOpacity={0.9}
             onPress={handleWaveformPress}
-            onLayout={(e) => { waveWidth.current = e.nativeEvent.layout.width; }}
+            onLayout={(e) => {
+              waveWidth.current = e.nativeEvent.layout.width;
+            }}
             style={audioPlayerStyles.waveform}
           >
             {WAVEFORM.map((barH, i) => {
@@ -323,7 +366,6 @@ const AudioPlayer = ({
         <View style={audioPlayerStyles.micBadge}>
           <Icon name="mic" size={11} color="#fff" />
         </View>
-
       </View>
     </View>
   );
@@ -332,206 +374,234 @@ const AudioPlayer = ({
 // ─────────────────────────────────────────────────────────────────────────────
 // MESSAGE ITEM
 // ─────────────────────────────────────────────────────────────────────────────
-const MessageItem = React.memo(({
-  item,
-  ownMessage,
-  guestMsg,
-  messageTime,
-  isImageLoading,
-  isImageError: imageError,
-  isDownloading,
-  downloadProgress,
-  onLongPress,
-  onImagePress,
-  onVideoPress,
-  onFilePress,
-  onDownloadPress,
-  onImageLoadStart,
-  onImageLoadEnd,
-  onImageError,
-}) => {
+const MessageItem = React.memo(
+  ({
+    item,
+    ownMessage,
+    guestMsg,
+    messageTime,
+    isImageLoading,
+    isImageError: imageError,
+    isDownloading,
+    downloadProgress,
+    onLongPress,
+    onImagePress,
+    onVideoPress,
+    onFilePress,
+    onDownloadPress,
+    onImageLoadStart,
+    onImageLoadEnd,
+    onImageError,
+  }) => {
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(false);
 
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState(false);
+    if (!item) return null;
 
-  if (!item) return null;
+    const messageText = item.content || item.message || item.text || item.body;
+    const fileUrl = item.file_url;
 
-  const messageText = item.content || item.message || item.text || item.body;
-  const fileUrl     = item.file_url;
+    const bubbleStyle = [
+      styles.messageContainer,
+      ownMessage
+        ? styles.currentUserMessageContainer
+        : styles.otherUserMessageContainer,
+      guestMsg && styles.guestMessageContainer,
+    ];
 
-  const bubbleStyle = [
-    styles.messageContainer,
-    ownMessage
-      ? styles.currentUserMessageContainer
-      : styles.otherUserMessageContainer,
-    guestMsg && styles.guestMessageContainer,
-  ];
+    const tailStyle = ownMessage
+      ? styles.currentUserMessageTail
+      : styles.otherUserMessageTail;
 
-  const tailStyle = ownMessage
-    ? styles.currentUserMessageTail
-    : styles.otherUserMessageTail;
+    const renderStatus = () => {
+      if (!ownMessage) return null;
+      const isRead = item.status === 'read' || !!item.read_at;
+      return (
+        <Icon
+          name="done-all"
+          size={14}
+          color={isRead ? '#53BDEB' : '#667781'}
+          style={styles.messageStatus}
+        />
+      );
+    };
 
-  const renderStatus = () => {
-    if (!ownMessage) return null;
-    const isRead = item.status === 'read' || !!item.read_at;
-    return (
-      <Icon
-        name="done-all"
-        size={14}
-        color={isRead ? '#53BDEB' : '#667781'}
-        style={styles.messageStatus}
-      />
+    const renderFooter = () => (
+      <View style={styles.messageFooter}>
+        <Text style={styles.messageTime}>{messageTime}</Text>
+        {renderStatus()}
+      </View>
     );
-  };
 
-  const renderFooter = () => (
-    <View style={styles.messageFooter}>
-      <Text style={styles.messageTime}>{messageTime}</Text>
-      {renderStatus()}
-    </View>
-  );
+    // ── TEXT ────────────────────────────────────────────────────────────────
+    if (messageText && !fileUrl) {
+      return (
+        <TouchableOpacity
+          onLongPress={onLongPress}
+          activeOpacity={0.85}
+          delayLongPress={300}
+        >
+          <View style={bubbleStyle}>
+            <View style={[styles.messageTail, tailStyle]} />
+            <Text style={styles.messageText}>{messageText}</Text>
+            {renderFooter()}
+          </View>
+        </TouchableOpacity>
+      );
+    }
 
-  // ── TEXT ────────────────────────────────────────────────────────────────
-  if (messageText && !fileUrl) {
-    return (
-      <TouchableOpacity onLongPress={onLongPress} activeOpacity={0.85} delayLongPress={300}>
-        <View style={bubbleStyle}>
-          <View style={[styles.messageTail, tailStyle]} />
-          <Text style={styles.messageText}>{messageText}</Text>
-          {renderFooter()}
-        </View>
-      </TouchableOpacity>
-    );
-  }
-
-  // ── IMAGE ────────────────────────────────────────────────────────────────
-  if (fileUrl && fileUrl.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
-    return (
-      <TouchableOpacity
-        onLongPress={onLongPress}
-        onPress={() => onImagePress?.(fileUrl)}
-        activeOpacity={0.9}
-        delayLongPress={300}
-        style={{ alignSelf: ownMessage ? 'flex-end' : 'flex-start' }}
-      >
-        <View style={styles.imageWrapper}>
-          {(loading || isImageLoading) && (
-            <View style={styles.imageLoader}>
-              <ActivityIndicator size="small" color="#fff" />
+    // ── IMAGE ────────────────────────────────────────────────────────────────
+    if (fileUrl && fileUrl.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+      return (
+        <TouchableOpacity
+          onLongPress={onLongPress}
+          onPress={() => onImagePress?.(fileUrl)}
+          activeOpacity={0.9}
+          delayLongPress={300}
+          style={{ alignSelf: ownMessage ? 'flex-end' : 'flex-start' }}
+        >
+          <View style={styles.imageWrapper}>
+            {(loading || isImageLoading) && (
+              <View style={styles.imageLoader}>
+                <ActivityIndicator size="small" color="#fff" />
+              </View>
+            )}
+            {imageError || error ? (
+              <View style={styles.fileErrorContainer}>
+                <Icon name="broken-image" size={32} color="#999" />
+                <Text style={styles.fileErrorText}>Image not available</Text>
+              </View>
+            ) : (
+              <Image
+                source={{ uri: fileUrl }}
+                style={styles.chatImage}
+                resizeMode="cover"
+                onLoadStart={() => {
+                  setLoading(true);
+                  onImageLoadStart?.();
+                }}
+                onLoadEnd={() => {
+                  setLoading(false);
+                  onImageLoadEnd?.();
+                }}
+                onError={() => {
+                  setLoading(false);
+                  setError(true);
+                  onImageError?.();
+                }}
+              />
+            )}
+            {isDownloading && (
+              <View style={styles.uploadOverlay}>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={styles.uploadText}>{downloadProgress || 0}%</Text>
+                {downloadProgress > 0 && (
+                  <View style={styles.progressBar}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        { width: `${downloadProgress}%` },
+                      ]}
+                    />
+                  </View>
+                )}
+              </View>
+            )}
+            <View style={styles.imageFooter}>
+              <Text style={styles.imageTime}>{messageTime}</Text>
+              {renderStatus()}
             </View>
-          )}
-          {imageError || error ? (
-            <View style={styles.fileErrorContainer}>
-              <Icon name="broken-image" size={32} color="#999" />
-              <Text style={styles.fileErrorText}>Image not available</Text>
+          </View>
+        </TouchableOpacity>
+      );
+    }
+
+    // ── VIDEO ────────────────────────────────────────────────────────────────
+    if (fileUrl && fileUrl.match(/\.(mp4|mov|avi|mkv)$/i)) {
+      return (
+        <TouchableOpacity
+          onLongPress={onLongPress}
+          onPress={() => onVideoPress?.(fileUrl)}
+          activeOpacity={0.9}
+          delayLongPress={300}
+        >
+          <View style={bubbleStyle}>
+            <View style={styles.videoContainer}>
+              <Icon
+                name="play-circle-filled"
+                size={48}
+                color="rgba(255,255,255,0.9)"
+              />
             </View>
-          ) : (
-            <Image
-              source={{ uri: fileUrl }}
-              style={styles.chatImage}
-              resizeMode="cover"
-              onLoadStart={() => { setLoading(true);  onImageLoadStart?.(); }}
-              onLoadEnd={()   => { setLoading(false); onImageLoadEnd?.();   }}
-              onError={()     => { setLoading(false); setError(true); onImageError?.(); }}
+            {renderFooter()}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+
+    // ── AUDIO (Voice message) ────────────────────────────────────────────────
+    if (
+      (fileUrl && fileUrl.match(/\.(mp3|wav|aac|ogg|m4a)$/i)) ||
+      (item.type && item.type.startsWith('audio/')) ||
+      item.type === 'audio' ||
+      (item.file_type && item.file_type.startsWith('audio/')) ||
+      (item.file_name && item.file_name.match(/\.(mp3|wav|aac|ogg|m4a)$/i))
+    ) {
+      return (
+        <TouchableOpacity
+          onLongPress={onLongPress}
+          activeOpacity={1}
+          delayLongPress={300}
+        >
+          <View style={bubbleStyle}>
+            <View style={[styles.messageTail, tailStyle]} />
+            <AudioPlayer
+              fileUrl={fileUrl}
+              ownMessage={ownMessage}
+              messageTime={messageTime}
+              renderStatusFn={renderStatus}
+              initialDuration={Number(item.duration || item.audio_duration || 0)}
             />
-          )}
-          {isDownloading && (
-            <View style={styles.uploadOverlay}>
-              <ActivityIndicator size="small" color="#fff" />
-              <Text style={styles.uploadText}>{downloadProgress || 0}%</Text>
-              {downloadProgress > 0 && (
-                <View style={styles.progressBar}>
-                  <View style={[styles.progressFill, { width: `${downloadProgress}%` }]} />
-                </View>
-              )}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+
+    // ── FILE (PDF / DOC / ZIP) ───────────────────────────────────────────────
+    if (fileUrl) {
+      return (
+        <TouchableOpacity
+          onLongPress={onLongPress}
+          onPress={() =>
+            onFilePress ? onFilePress() : Linking.openURL(fileUrl)
+          }
+          activeOpacity={0.85}
+          delayLongPress={300}
+        >
+          <View style={bubbleStyle}>
+            <View style={styles.fileMessageContainer}>
+              <Icon name="insert-drive-file" size={28} color="#075E54" />
+              <Text style={styles.fileMessageName} numberOfLines={2}>
+                {item.file_name || 'Open File'}
+              </Text>
+              <TouchableOpacity onPress={onDownloadPress}>
+                <Icon name="download" size={22} color="#075E54" />
+              </TouchableOpacity>
             </View>
-          )}
-          <View style={styles.imageFooter}>
-            <Text style={styles.imageTime}>{messageTime}</Text>
-            {renderStatus()}
+            {renderFooter()}
           </View>
-        </View>
-      </TouchableOpacity>
-    );
-  }
+        </TouchableOpacity>
+      );
+    }
 
-  // ── VIDEO ────────────────────────────────────────────────────────────────
-  if (fileUrl && fileUrl.match(/\.(mp4|mov|avi|mkv)$/i)) {
+    // ── FALLBACK ─────────────────────────────────────────────────────────────
     return (
-      <TouchableOpacity
-        onLongPress={onLongPress}
-        onPress={() => onVideoPress?.(fileUrl)}
-        activeOpacity={0.9}
-        delayLongPress={300}
-      >
-        <View style={bubbleStyle}>
-          <View style={styles.videoContainer}>
-            <Icon name="play-circle-filled" size={48} color="rgba(255,255,255,0.9)" />
-          </View>
-          {renderFooter()}
-        </View>
-      </TouchableOpacity>
+      <View style={bubbleStyle}>
+        <Text style={styles.messageText}>Unsupported message</Text>
+        {renderFooter()}
+      </View>
     );
   }
-
-  // ── AUDIO (Voice message) ────────────────────────────────────────────────
-  if (
-    (fileUrl && fileUrl.match(/\.(mp3|wav|aac|ogg|m4a)$/i)) ||
-    (item.type      && item.type.startsWith('audio/'))      ||
-    item.type === 'audio'                                    ||
-    (item.file_type && item.file_type.startsWith('audio/')) ||
-    (item.file_name && item.file_name.match(/\.(mp3|wav|aac|ogg|m4a)$/i))
-  ) {
-    return (
-      <TouchableOpacity onLongPress={onLongPress} activeOpacity={1} delayLongPress={300}>
-        <View style={bubbleStyle}>
-          <View style={[styles.messageTail, tailStyle]} />
-          <AudioPlayer
-            fileUrl={fileUrl}
-            ownMessage={ownMessage}
-            messageTime={messageTime}
-            renderStatusFn={renderStatus}
-            // item.duration = seconds stored by server when recording is uploaded
-            // Without this, timer shows '--:--' until user presses play (acceptable)
-            initialDuration={item.duration || item.audio_duration || 0}
-          />
-        </View>
-      </TouchableOpacity>
-    );
-  }
-
-  // ── FILE (PDF / DOC / ZIP) ───────────────────────────────────────────────
-  if (fileUrl) {
-    return (
-      <TouchableOpacity
-        onLongPress={onLongPress}
-        onPress={() => onFilePress ? onFilePress() : Linking.openURL(fileUrl)}
-        activeOpacity={0.85}
-        delayLongPress={300}
-      >
-        <View style={bubbleStyle}>
-          <View style={styles.fileMessageContainer}>
-            <Icon name="insert-drive-file" size={28} color="#075E54" />
-            <Text style={styles.fileMessageName} numberOfLines={2}>
-              {item.file_name || 'Open File'}
-            </Text>
-            <TouchableOpacity onPress={onDownloadPress}>
-              <Icon name="download" size={22} color="#075E54" />
-            </TouchableOpacity>
-          </View>
-          {renderFooter()}
-        </View>
-      </TouchableOpacity>
-    );
-  }
-
-  // ── FALLBACK ─────────────────────────────────────────────────────────────
-  return (
-    <View style={bubbleStyle}>
-      <Text style={styles.messageText}>Unsupported message</Text>
-      {renderFooter()}
-    </View>
-  );
-});
+);
 
 export default MessageItem;
