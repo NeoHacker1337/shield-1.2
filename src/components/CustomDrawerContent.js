@@ -17,7 +17,7 @@ const CustomDrawerContent = (props) => {
   const { navigation } = props;
 
   const drawerItems = [
-  { label: 'Get Premium', icon: 'star', screen: 'GetPremium' }, 
+  // { label: 'Get Premium', icon: 'star', screen: 'GetPremium' }, 
   { label: 'Profile', icon: 'person', screen: 'Profile' },
   { label: 'Settings', icon: 'settings', screen: 'Settings' },
   { label: 'Feedback', icon: 'feedback', screen: 'Feedback' },

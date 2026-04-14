@@ -579,7 +579,7 @@ const ProfileScreen = ({ navigation }) => {
 
           {/* Action Buttons */}
           {/* Upgrade Button for Free Users */}
-          {!profileData.isPremium && (
+          {/* {!profileData.isPremium && (
             <TouchableOpacity
               style={styles.upgradeButton}
               onPress={() => navigation.navigate('GetPremium')}
@@ -591,7 +591,7 @@ const ProfileScreen = ({ navigation }) => {
                 <Text style={styles.upgradeSubtext}>Unlock all features</Text>
               </View>
             </TouchableOpacity>
-          )}
+          )} */}
 
           <TouchableOpacity
             style={styles.logoutButton}

@@ -3,7 +3,7 @@ import { Modal, View, Text, FlatList, TouchableOpacity, TextInput, ActivityIndic
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import styles from '../../assets/ChatSystemStyles';
 
-const ContactsModal = ({ visible, onClose, contacts, contactsLoading, searchQuery, onSearch, onSelectContact }) => {
+const ContactsModal = ({ visible, onClose, contacts, contactsLoading, searchQuery, onSearch, onSelectContact , onViewAllInvitations  }) => {
   const renderItem = ({ item }) => {
     const name   = item.name || 'Unknown';
     const isOnline = Math.random() > 0.5;
@@ -22,6 +22,7 @@ const ContactsModal = ({ visible, onClose, contacts, contactsLoading, searchQuer
           {isOnline && !item.is_current_user && <Text style={styles.onlineText}>Online</Text>}
         </View>
       </TouchableOpacity>
+      
     );
   };
 

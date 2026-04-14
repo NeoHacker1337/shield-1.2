@@ -148,12 +148,9 @@ class AuthService {
         sharedPreferencesName: 'shieldSharedPrefs',
         keychainService: 'shieldKeychain',
       });
-
       await Keychain.setGenericPassword('passcode', passcode, {
         service: PASSCODE_AUTH_SERVICE,
-        accessControl:
-          Keychain.ACCESS_CONTROL.BIOMETRY_CURRENT_SET_OR_DEVICE_PASSCODE,
-        authenticatePrompt: 'Authenticate to save passcode',
+        accessControl: Keychain.ACCESS_CONTROL.NONE,
       });
 
       return true;

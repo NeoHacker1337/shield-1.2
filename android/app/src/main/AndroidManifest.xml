@@ -1,20 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.shield">
 
-    <!-- Package visibility (for call intent if needed) -->
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.CALL" />
-            <data android:scheme="tel" />
-        </intent>
-    </queries>
-
     <!-- Basic permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.CALL_PHONE" />
 
     <!-- Storage permissions -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
@@ -27,13 +18,10 @@
 
     <!-- Optional: only keep if you REALLY need full storage access -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
-
     <!-- Foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
     <!-- Contacts (if used) -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 
@@ -48,11 +36,10 @@
         <!-- MAIN ACTIVITY (VISIBLE IN LAUNCHER) -->
         <activity
             android:name=".MainActivity"
-            android:exported="true"
-            android:launchMode="singleTop"
-            android:windowSoftInputMode="adjustNothing"
+            android:label="@string/app_name"
             android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
-            android:theme="@style/AppTheme">
+            android:windowSoftInputMode="adjustResize"
+            android:exported="true">
 
             <!-- Launcher entry -->
             <intent-filter>
@@ -61,14 +48,6 @@
             </intent-filter>
 
         </activity>
-
-        <!-- App Lock Service -->
-        <service
-            android:name=".AppLockService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:enabled="true" />
-
     </application>
 
 </manifest>

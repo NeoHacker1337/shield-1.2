@@ -17,9 +17,18 @@ const useContactName = ({ chatRoom, currentUser }) => {
           Array.isArray(chatRoom.participants) &&
           currentUser.id
         ) {
+
+          // Add this guard at the top of resolveLocalContactName
+          if (!chatRoom || !currentUser || !currentUser.id) return;
+
+          // Fix the ID comparison to handle type mismatch (string vs number)
           const otherParticipant = chatRoom.participants.find(
-            (p) => p && p.id !== currentUser.id
+            p => p && String(p.id) !== String(currentUser.id)
           );
+          // old code
+          // const otherParticipant = chatRoom.participants.find(
+          //   p => p && p.id !== currentUser.id
+          // );
           participantEmail =
             otherParticipant?.email ||
             otherParticipant?.email_address ||

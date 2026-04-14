@@ -58,38 +58,26 @@ const requestCallPermission = async () => {
  * This is the function you'll typically use in your components.
  */
 export const checkAndRequestCallPermission = async () => {
-  if (Platform.OS !== 'android') return true;
+  if (Platform.OS !== 'android') return;
 
-  try {
-    const result = await PermissionsAndroid.request(
-      PermissionsAndroid.PERMISSIONS.CALL_PHONE,
-      {
-        title: 'Phone Permission Required',
-        message: 'Allow Shield to make secure phone calls.',
-        buttonPositive: 'Allow',
-        buttonNegative: 'Deny',
-      }
-    );
+  const permissions = [
+    PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+    PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+    PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
+    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+  ];
 
-    if (result === PermissionsAndroid.RESULTS.GRANTED) {
-      return true;
+  // ✅ Check first — only request what is NOT yet granted
+  const ungrantedPermissions = [];
+
+  for (const permission of permissions) {
+    const alreadyGranted = await PermissionsAndroid.check(permission);
+    if (!alreadyGranted) {
+      ungrantedPermissions.push(permission);
     }
-
-    if (result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) {
-      Alert.alert(
-        'Permission Required',
-        'Phone permission is disabled. Enable it in Settings.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Open Settings', onPress: () => Linking.openSettings() },
-        ]
-      );
-    }
-
-    return false;
-
-  } catch (e) {
-    console.warn('CALL_PHONE permission error', e);
-    return false;
   }
+
+  if (ungrantedPermissions.length === 0) return; // ✅ All granted, skip dialog
+
+  await PermissionsAndroid.requestMultiple(ungrantedPermissions);
 };

@@ -19,8 +19,9 @@ import {
   flushSyncQueue,
   mergeServerMeta,
 } from './metaSyncService';
-
+import AsyncStorage from '@react-native-async-storage/async-storage';
 const CHAT_LOCK_SERVICE = 'shield-chat-lock';
+const CHAT_ROOMS_CACHE_KEY = 'shield-chat-rooms-cache';
 import { verifyPin } from '../../services/pinService';
 export default function useChatSystem(navigation) {
 
@@ -101,35 +102,52 @@ export default function useChatSystem(navigation) {
   // ══════════════════════════════════════════════════════════════════════════
   // EFFECT 3 — Initialize: get user + load chat rooms
   // ══════════════════════════════════════════════════════════════════════════
+
   const loadChatRooms = useCallback(async () => {
     try {
       const res = await chatService.getChatRooms();
-      setChatRooms(res.data || res);
-    } catch { /* silent — user already has local data */ }
+      const fresh = res.data ?? res;
+      setChatRooms(fresh);
+
+      // ✅ Cache fresh data to AsyncStorage for offline use
+      await AsyncStorage.setItem(CHAT_ROOMS_CACHE_KEY, JSON.stringify(fresh));
+    } catch (e) {
+      console.log('loadChatRooms error (silent):', e?.message);
+
+      // ✅ Offline fallback — load from cache so user sees their last known rooms
+      try {
+        const cached = await AsyncStorage.getItem(CHAT_ROOMS_CACHE_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setChatRooms(parsed);
+          console.log('Loaded chat rooms from offline cache:', parsed.length);
+        }
+      } catch {
+        // truly nothing to show
+      }
+    }
   }, []);
 
   useEffect(() => {
-    (async () => {
+    async function init() {
       try {
         setLoading(true);
         const user = await authService.getCurrentUser();
+        console.log('AUTH USER:', user);        // 👈 check if user loads
         setCurrentUser(user);
-        if (user) await loadChatRooms();
-      } catch {
+        if (user) {
+          await loadChatRooms();
+          console.log('ROOMS LOADED OK');       // 👈 check if rooms load
+        }
+      } catch (e) {
+        console.log('INIT ERROR DETAIL:', e);  // 👈 this shows the real cause
         Alert.alert('Error', 'Failed to initialize chat system.');
       } finally {
         setLoading(false);
       }
-    })();
-  }, [loadChatRooms]);
-
-  useFocusEffect(useCallback(() => {
-    const now = Date.now();
-    if (currentUser && !loading && (now - lastFetchRef.current > 30000)) {
-      lastFetchRef.current = now;
-      loadChatRooms();
     }
-  }, [currentUser, loadChatRooms, loading]));
+    init();
+  }, [loadChatRooms]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // EFFECT 4 — Merge server meta after chatRooms loads
@@ -220,6 +238,48 @@ export default function useChatSystem(navigation) {
     await loadChatRooms();
     setRefreshing(false);
   }, [loadChatRooms]);
+
+
+  // ─── EFFECT 6: WhatsApp-style auto-refresh ───────────────────────────────────
+  const pollingRef = useRef(null);
+  const isFocusedRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      isFocusedRef.current = true;
+
+      // ✅ Guard: skip if initial load hasn't finished yet
+      // EFFECT 3 handles the very first load — we only take over after that
+      if (currentUser && !loading) {
+        loadChatRooms();
+      }
+
+      // Poll every 5 seconds while screen is focused
+      pollingRef.current = setInterval(async () => {
+        // ✅ Don't poll when offline — no point hitting a dead network
+        if (isFocusedRef.current && currentUser && !loading && isOnline) {
+          try {
+            const res = await chatService.getChatRooms();
+            const fresh = res.data ?? res;
+            setChatRooms(fresh);
+            // Keep cache updated on every successful poll
+            await AsyncStorage.setItem(CHAT_ROOMS_CACHE_KEY, JSON.stringify(fresh));
+          } catch {
+            // silent
+          }
+        }
+      }, 5000);
+
+      return () => {
+        isFocusedRef.current = false;
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+        }
+      };
+    }, [currentUser, loading, loadChatRooms, isOnline])  // ← loading here is intentional as a read-only guard
+  );
+  // ─────────────────────────────────────────────────────────────────────────────
 
   // ── Search handlers ───────────────────────────────────────────────────────
   const openSearch = () => {
@@ -624,22 +684,29 @@ export default function useChatSystem(navigation) {
     } finally { setLoading(false); }
   };
 
-
+  // ══════════════════════════════════════════════════════════════════════════
+  // CHAT ROOM DISPLAY NAME
+  // ══════════════════════════════════════════════════════════════════════════
   const getDisplayNameFromChatRoom = useCallback((room, user) => {
-    // 1. Device contact name (from phone contacts)
+    // 1. Device contact name (phone book match) — highest priority
     if (localRoomNames[room?.id]) return localRoomNames[room.id];
 
-    // 2. Room name from API
-    if (room?.name && room.name !== null && room.name.trim()) return room.name;
-
-    // 3. Other participant's name
+    // 2. ✅ Other participant's name from server — check THIS before room.name
+    //    This correctly shows the unknown sender's server-registered name
     if (Array.isArray(room?.participants) && user?.id) {
       const other = room.participants.find(p => p && p.id !== user.id);
-      if (other?.name && other.name.trim()) return other.name;
+      // Use their display name or username as fallback
+      const otherName = other?.name?.trim() || other?.username?.trim();
+      if (otherName) return otherName;
     }
 
+    // 3. Room name from API — only for group chats or when no participants data
+    //    For one-to-one chats, room.name is often YOUR name (set by the other side)
+    //    so we skip it for one-to-one and only use it for groups
+    if (room?.type !== 'one-to-one' && room?.name?.trim()) return room.name;
+
     // 4. Guest fallback
-    if (room?.type === 'guest' || room?.is_guest_room) return 'Guest Chat';
+    if (room?.type === 'guest' || room?.isguestroom) return 'Guest Chat';
 
     return 'Unknown Contact';
   }, [localRoomNames]);

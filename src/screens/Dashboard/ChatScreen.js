@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,35 +9,37 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
-  Dimensions,
   Pressable,
   Image,
   PermissionsAndroid,
+  StatusBar,
 } from 'react-native';
+
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
+import Video from 'react-native-video';
+import useKeyboard from '../chatSystem/Features/useKeyboard';
 import Sound, {
   AudioEncoderAndroidType,
   AudioSourceAndroidType,
   AVEncoderAudioQualityIOSType,
-
 } from 'react-native-nitro-sound';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-
 import authService from '../../services/AuthService';
 import { handleApiError } from '../../utils/errorHandler';
 import styles from '../../assets/ChatScreenStyles';
 import AttachmentMenu from '../chatSystem/AttachmentMenu';
 import useAttachment from '../chatSystem/useAttachment';
 import MessageItem from '../chatSystem/MessageItem';
-
-// ── All 8 Feature hooks & helpers ──────────────────────────────
-import useKeyboard from '../chatSystem/Features/useKeyboard';
 import useContactName from '../chatSystem/Features/useContactName';
 import useMessages from '../chatSystem/Features/useMessages';
 import useSendMessage from '../chatSystem/Features/useSendMessage';
 import useChatActions from '../chatSystem/Features/useChatActions';
 import useEmojiPicker from '../chatSystem/Features/useEmojiPicker';
 import useImageViewer from '../chatSystem/Features/useImageViewer';
+
 import {
   getDisplayNameFromChatRoom,
   getContactAvatar,
@@ -50,8 +52,6 @@ import {
   isGuestMessage,
 } from '../chatSystem/Features/ChatHelpers';
 
-const { width } = Dimensions.get('window');
-
 const ChatScreen = ({ route, navigation }) => {
   const insets = useSafeAreaInsets();
 
@@ -61,17 +61,18 @@ const ChatScreen = ({ route, navigation }) => {
     contactName,
   } = route.params || {};
 
-  // ── Local screen state ───────────────────────────────────────
   const [chatRoom, setChatRoom] = useState(initialChatRoom);
   const [currentUser, setCurrentUser] = useState(initialCurrentUser);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
 
   const flatListRef = useRef(null);
+  const inputRef = useRef(null);
 
-
+  // ✅ Use your keyboard hook
+  const { keyboardHeight, isKeyboardVisible } = useKeyboard();
 
   // ════════════════════════════════════════════════════════════
-  // HOOK 0 — Initialize current user if not passed via route
+  // INITIALIZE USER
   // ════════════════════════════════════════════════════════════
   useEffect(() => {
     const initializeUser = async () => {
@@ -88,21 +89,10 @@ const ChatScreen = ({ route, navigation }) => {
   }, [currentUser]);
 
   // ════════════════════════════════════════════════════════════
-  // HOOK 1 — useKeyboard
-  // Tracks real keyboard height for paddingBottom fix
-  // ════════════════════════════════════════════════════════════
-  const { keyboardHeight } = useKeyboard();
-
-  // ════════════════════════════════════════════════════════════
-  // HOOK 2 — useContactName
-  // Resolves contact name from device contacts by email
+  // ALL HOOKS
   // ════════════════════════════════════════════════════════════
   const { localContactName } = useContactName({ chatRoom, currentUser });
 
-  // ════════════════════════════════════════════════════════════
-  // HOOK 3 — useMessages
-  // Handles load, polling, pagination, scroll badge
-  // ════════════════════════════════════════════════════════════
   const {
     messages,
     setMessages,
@@ -120,46 +110,33 @@ const ChatScreen = ({ route, navigation }) => {
     handleScroll,
   } = useMessages({ chatRoom, currentUser });
 
-  // ════════════════════════════════════════════════════════════
-  // HOOK 4 — useSendMessage
-  // Handles text send + file/image/video upload with progress
-  // ════════════════════════════════════════════════════════════
   const {
     newMessage,
     setNewMessage,
     isSending,
-    uploadProgress,
-    uploadingFiles,
     handleSend,
     handleSendFile,
   } = useSendMessage({ chatRoom, currentUser, setMessages, lastMessageIdRef });
 
-  // ════════════════════════════════════════════════════════════
-  // HOOK 5 — useChatActions
-  // Long-press delete message, clear chat, delete chat
-  // ════════════════════════════════════════════════════════════
   const {
     handleMessageLongPress,
-    handleClearChat,
-    handleDeleteChat,
     handleAudioCall,
     handleVideoCall,
     handleSearch,
     handleMedia,
     handleViewContact,
-    handleNewGroup,
     handleMute,
     handleReport,
     handleBlock,
-  } = useChatActions({ currentUser, setMessages, lastMessageIdRef, navigation });
+  } = useChatActions({
+    currentUser,
+    setMessages,
+    lastMessageIdRef,
+    navigation,
+  });
 
-  // ════════════════════════════════════════════════════════════
-  // HOOK 6 — useEmojiPicker
-  // Emoji state, categories, add emoji, toggle
-  // ════════════════════════════════════════════════════════════
   const {
     showEmojiPicker,
-    setShowEmojiPicker,
     activeCategory,
     setActiveCategory,
     categoryTabs,
@@ -169,10 +146,6 @@ const ChatScreen = ({ route, navigation }) => {
     closeEmojiPicker,
   } = useEmojiPicker(setNewMessage);
 
-  // ════════════════════════════════════════════════════════════
-  // HOOK 7 — useImageViewer
-  // Full-screen image/video viewer, download, per-message tracking
-  // ════════════════════════════════════════════════════════════
   const {
     selectedImage,
     selectedVideo,
@@ -191,10 +164,6 @@ const ChatScreen = ({ route, navigation }) => {
     downloadFile,
   } = useImageViewer();
 
-  // ════════════════════════════════════════════════════════════
-  // HOOK 8 — useAttachment
-  // Gallery / Camera / Document picker → triggers handleSendFile
-  // ════════════════════════════════════════════════════════════
   const {
     showAttachmentMenu,
     setShowAttachmentMenu,
@@ -222,8 +191,6 @@ const ChatScreen = ({ route, navigation }) => {
   // ════════════════════════════════════════════════════════════
   // EFFECTS
   // ════════════════════════════════════════════════════════════
-
-  // Start polling every 3 seconds once chat is loaded
   useEffect(() => {
     if (chatRoom?.id && !loading) {
       pollingIntervalRef.current = setInterval(checkForNewMessages, 3000);
@@ -236,56 +203,65 @@ const ChatScreen = ({ route, navigation }) => {
     };
   }, [chatRoom?.id, loading, checkForNewMessages]);
 
-  // Auto-scroll to bottom when a new message arrives
   useEffect(() => {
     if (isAtBottom && messages.length > 0) {
-      setTimeout(() => {
-        flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-      }, 100);
+      setTimeout(() => scrollToBottom(), 100);
     }
-  }, [messages.length]);
+  }, [messages.length, isAtBottom]);
 
-  // Reload messages fresh when chatRoom changes
   useEffect(() => {
     if (chatRoom?.id) {
       loadMessages(1, false);
     }
   }, [chatRoom?.id]);
 
-  // Cleanup polling interval on screen unmount
   useEffect(() => {
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
+      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
     };
   }, []);
 
-  // Cleanup recording on unmount
   useEffect(() => {
     return () => {
       if (isRecording) {
         Sound.stopRecorder().catch(() => { });
         Sound.removeRecordBackListener();
       }
-      if (recordTimerRef.current) {
-        clearInterval(recordTimerRef.current);
-      }
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
     };
+  }, [isRecording]);
+
+  // ✅ Auto scroll on keyboard open
+  useEffect(() => {
+    if (isKeyboardVisible) {
+      setTimeout(() => {
+        scrollToBottom(false);
+      }, 100);
+    }
+  }, [isKeyboardVisible, scrollToBottom]);
+
+  // ════════════════════════════════════════════════════════════
+  // SCROLL
+  // ════════════════════════════════════════════════════════════
+  const scrollToBottom = useCallback((animated = true) => {
+    requestAnimationFrame(() => {
+      flatListRef.current?.scrollToOffset({
+        offset: 0,
+        animated,
+      });
+    });
   }, []);
 
   // ════════════════════════════════════════════════════════════
-  // AUDIO RECORDING HELPERS
+  // AUDIO HELPERS
   // ════════════════════════════════════════════════════════════
-
-  // Request mic permission (Android)
   const requestPermission = async () => {
     if (Platform.OS === 'android') {
       const granted = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
         {
           title: 'Microphone Permission',
-          message: 'Shield needs microphone access to record audio messages.',
+          message: 'App needs microphone access to record audio messages.',
           buttonPositive: 'Allow',
           buttonNegative: 'Deny',
         },
@@ -319,27 +295,22 @@ const ChatScreen = ({ route, navigation }) => {
     setRecordTime('00:00');
   };
 
-  // 🎙 Start Recording
   const onStartRecord = async () => {
     const hasPermission = await requestPermission();
     if (!hasPermission) return;
-
     try {
-      // ✅ Keep only Android settings (remove iOS-only AVEncodingOption)
       const audioSet = {
         AudioEncoderAndroid: AudioEncoderAndroidType.AAC,
         AudioSourceAndroid: AudioSourceAndroidType.MIC,
         AudioSamplingRate: 44100,
         AudioEncodingBitRate: 128000,
         AudioChannels: 1,
-        // iOS settings — only added when running on iOS
         ...(Platform.OS === 'ios' && {
           AVEncoderAudioQualityKeyIOS: AVEncoderAudioQualityIOSType.high,
           AVNumberOfChannelsKeyIOS: 2,
-          AVFormatIDKeyIOS: 'aac',  // ✅ use plain string, not AVEncodingOption.aac
+          AVFormatIDKeyIOS: 'aac',
         }),
       };
-
       const filePath = await Sound.startRecorder(undefined, audioSet, true);
       setRecordedFilePath(filePath);
       setIsRecording(true);
@@ -349,7 +320,6 @@ const ChatScreen = ({ route, navigation }) => {
     }
   };
 
-  // ✅ Stop & Send Recording
   const onStopAndSendRecord = async () => {
     try {
       const filePath = await Sound.stopRecorder();
@@ -358,7 +328,6 @@ const ChatScreen = ({ route, navigation }) => {
       stopRecordTimer();
       setIsRecording(false);
       setRecordedFilePath(null);
-
       if (filePath && chatRoom?.id) {
         const payload = {
           uri: filePath,
@@ -366,7 +335,6 @@ const ChatScreen = ({ route, navigation }) => {
           type: 'audio/aac',
           duration: durationSeconds,
         };
-
         handleSendFile(payload, 'audio');
       }
     } catch (error) {
@@ -376,8 +344,6 @@ const ChatScreen = ({ route, navigation }) => {
     }
   };
 
-
-  // ✖ Cancel Recording (discard)
   const onCancelRecord = async () => {
     try {
       await Sound.stopRecorder();
@@ -394,8 +360,6 @@ const ChatScreen = ({ route, navigation }) => {
   // ════════════════════════════════════════════════════════════
   // RENDER HELPERS
   // ════════════════════════════════════════════════════════════
-
-  // Spinner shown at top of inverted FlatList while loading older pages
   const renderLoadingHeader = () => {
     if (!loadingOlderMessages || !hasMoreMessages) return null;
     return (
@@ -406,11 +370,8 @@ const ChatScreen = ({ route, navigation }) => {
     );
   };
 
-  // Each message row — date separator + MessageItem
   const renderMessageItem = ({ item, index }) => {
     if (!item || !item.id) return null;
-
-    // Because FlatList is inverted, previous message is at index+1
     const prevItem = messages[messages.length - 1 - (index + 1)] || null;
     const showDate = shouldShowDateSeparator(item, prevItem);
     const messageTime = formatMessageTime(item.created_at);
@@ -419,14 +380,13 @@ const ChatScreen = ({ route, navigation }) => {
 
     return (
       <>
-        {/* Date separator — Today / Yesterday / Monday / 12 Mar 2025 */}
         {showDate && (
-          <View style={styles.dateSeparatorContainer}>
-            <Text style={styles.dateSeparatorText}>{formatMessageDateLabel(item.created_at)}</Text>
+          <View style={styles.dateSeparatorWrapper}>
+            <Text style={styles.dateSeparatorText}>
+              {formatMessageDateLabel(item.created_at)}
+            </Text>
           </View>
         )}
-
-        {/* Message bubble */}
         <MessageItem
           item={item}
           currentUser={currentUser}
@@ -441,7 +401,9 @@ const ChatScreen = ({ route, navigation }) => {
           onImagePress={() => openImage(item.file_url)}
           onVideoPress={() => openVideo(item.file_url)}
           onFilePress={() => openFile(item.file_url, item.file_name)}
-          onDownloadPress={() => downloadFile(item.file_url, item.file_name, item.id)}
+          onDownloadPress={() =>
+            downloadFile(item.file_url, item.file_name, item.id)
+          }
           onImageLoadStart={() => onImageLoadStart(item.id)}
           onImageLoadEnd={() => onImageLoadEnd(item.id)}
           onImageError={() => onImageError(item.id)}
@@ -451,7 +413,7 @@ const ChatScreen = ({ route, navigation }) => {
   };
 
   // ════════════════════════════════════════════════════════════
-  // EARLY RETURN — full-screen loader before chatRoom is ready
+  // EARLY RETURN
   // ════════════════════════════════════════════════════════════
   if (loading && !chatRoom) {
     return (
@@ -462,438 +424,478 @@ const ChatScreen = ({ route, navigation }) => {
     );
   }
 
-  // ════════════════════════════════════════════════════════════
-  // DERIVED DISPLAY VALUES (from ChatHelpers)
-  // ════════════════════════════════════════════════════════════
-  const baseDisplayName = getDisplayNameFromChatRoom(chatRoom, contactName, currentUser);
+  const baseDisplayName = getDisplayNameFromChatRoom(
+    chatRoom,
+    contactName,
+    currentUser,
+  );
   const displayName = localContactName || baseDisplayName;
   const avatarChar = getContactAvatar(displayName);
   const avatarColor = getAvatarColor(displayName);
   const isOnline = getOnlineStatus();
 
   // ════════════════════════════════════════════════════════════
-  // MAIN RENDER
+  // RENDER EMOJI PICKER
   // ════════════════════════════════════════════════════════════
-  return (
-    <KeyboardAvoidingView
-      style={styles.keyboardAvoidingView}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-    >
-      <View
-        style={[
-          styles.fullContainer,
-          {
-            paddingBottom:
-              keyboardHeight > 0 ? keyboardHeight : (insets.bottom || 0),
-          },
-        ]}
-      >
+  const renderEmojiPicker = () => {
+    if (!showEmojiPicker) return null;
+    return (
+      <View style={styles.emojiPickerContainer}>
+        <FlatList
+          data={categoryTabs}
+          horizontal
+          keyExtractor={(item) => item.key}
+          showsHorizontalScrollIndicator={false}
+          style={styles.emojiCategoryRow}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              onPress={() => setActiveCategory(item.key)}
+              style={[
+                styles.emojiCategoryTab,
+                activeCategory === item.key && styles.emojiCategoryTabActive,
+              ]}
+            >
+              <Text style={styles.emojiCategoryLabel}>{item.label}</Text>
+            </TouchableOpacity>
+          )}
+        />
+        <FlatList
+          data={getActiveEmojis()}
+          numColumns={8}
+          keyExtractor={(item, index) => `emoji-${item}-${index}`}
+          showsVerticalScrollIndicator={false}
+          style={styles.emojiGrid}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              onPress={() => addEmoji(item)}
+              style={styles.emojiButton}
+            >
+              <Text style={styles.emojiText}>{item}</Text>
+            </TouchableOpacity>
+          )}
+        />
+      </View>
+    );
+  };
 
-        {/* ══════════════════════════════════════
-          HEADER
-        ══════════════════════════════════════ */}
-        <View style={styles.header}>
+  // ════════════════════════════════════════════════════════════
+  // RENDER INPUT ROW
+  // ════════════════════════════════════════════════════════════
+  const renderInputRow = () => {
+    if (isRecording) {
+      return (
+        <View style={styles.recordingContainer}>
           <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.backButton}
+            onPress={onCancelRecord}
+            style={styles.recordingCancelBtn}
           >
-            <Icon name="arrow-back" size={24} color="#FFFFFF" />
+            <Icon name="delete" size={26} color="#e53935" />
           </TouchableOpacity>
-
-          <View style={styles.headerContent}>
-            <View style={styles.headerAvatarContainer}>
-              <View
-                style={[
-                  styles.headerAvatar,
-                  isOnline && styles.onlineAvatar,
-                  { backgroundColor: avatarColor },
-                ]}
-              >
-                <Text style={styles.headerAvatarText}>{avatarChar}</Text>
-              </View>
-              {isOnline && <View style={styles.headerOnlineIndicator} />}
-            </View>
-
-            <View style={styles.headerTextContainer}>
-              <Text style={styles.headerTitle}>{displayName}</Text>
-              <Text style={styles.headerSubtitle}>
-                {isOnline ? 'Online' : 'Last seen recently'}
-              </Text>
-            </View>
+          <View style={styles.recordingIndicatorRow}>
+            <View style={styles.recordingDot} />
+            <Text style={styles.recordingText}>Recording</Text>
+            <Text style={styles.recordingTimer}>{recordTime}</Text>
           </View>
-
-          <View style={styles.headerActions}>
-            <TouchableOpacity
-              onPress={() => setShowOptionsMenu(true)}
-              style={styles.headerActionButton}
-            >
-              <Icon name="more-vert" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* ══════════════════════════════════════
-          CHAT BODY
-        ══════════════════════════════════════ */}
-        <View style={styles.chatContainer}>
-
-          {/* New message badge */}
-          {showNewMessageBadge && (
-            <TouchableOpacity
-              style={styles.newMessageBadge}
-              onPress={() => {
-                flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-                setShowNewMessageBadge(false);
-              }}
-            >
-              <Icon name="arrow-downward" size={14} color="#fff" />
-              <Text style={styles.newMessageBadgeText}>New Messages</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Messages FlatList */}
-          {loading ? (
-            <View style={styles.messagesLoadingContainer}>
-              <ActivityIndicator size="large" color="#075E54" />
-              <Text style={styles.loadingText}>Loading messages...</Text>
-            </View>
-          ) : (
-            <FlatList
-              ref={flatListRef}
-              data={[...messages].reverse()}
-              renderItem={renderMessageItem}
-              keyExtractor={(item, index) =>
-                item.id ? item.id.toString() : `temp-${index}`
-              }
-              inverted
-              extraData={currentUser}
-              contentContainerStyle={styles.messageList}
-              keyboardShouldPersistTaps="handled"
-              scrollEventThrottle={16}
-              onScroll={handleScroll}
-              onEndReached={() => {
-                if (hasMoreMessages && !loadingOlderMessages && messages.length > 0) {
-                  loadOlderMessages();
-                }
-              }}
-              onEndReachedThreshold={0.2}
-              ListFooterComponent={renderLoadingHeader}
-              ListEmptyComponent={
-                <View style={styles.emptyMessagesContainer}>
-                  <Text style={styles.emptyMessagesText}>No messages yet</Text>
-                  <Text style={styles.emptyMessagesSubtext}>
-                    Start the conversation by sending a message below
-                  </Text>
-                </View>
-              }
-            />
-          )}
-        </View>
-
-        {/* ══════════════════════════════════════
-          EMOJI PICKER
-        ══════════════════════════════════════ */}
-        {showEmojiPicker && (
-          <View style={styles.emojiPicker}>
-            <FlatList
-              data={categoryTabs}
-              horizontal
-              keyExtractor={(item) => item.key}
-              showsHorizontalScrollIndicator={false}
-              style={styles.emojiCategoryRow}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  onPress={() => setActiveCategory(item.key)}
-                  style={[
-                    styles.emojiCategoryTab,
-                    activeCategory === item.key && styles.emojiCategoryTabActive,
-                  ]}
-                >
-                  <Text style={styles.emojiCategoryLabel}>{item.label}</Text>
-                </TouchableOpacity>
-              )}
-            />
-            <FlatList
-              data={getActiveEmojis()}
-              numColumns={8}
-              keyExtractor={(item, index) => `emoji-${item}-${index}`}
-              showsVerticalScrollIndicator={false}
-              style={styles.emojiGrid}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  onPress={() => addEmoji(item)}
-                  style={styles.emojiButton}
-                >
-                  <Text style={styles.emojiText}>{item}</Text>
-                </TouchableOpacity>
-              )}
-            />
-          </View>
-        )}
-
-        {/* ══════════════════════════════════════
-  AUDIO RECORDING BAR
-══════════════════════════════════════ */}
-        {isRecording && (
-          <View style={styles.recordingContainer}>
-
-            {/* ✖ Cancel */}
-            <TouchableOpacity
-              onPress={onCancelRecord}
-              style={styles.recordingCancelBtn}
-            >
-              <Icon name="delete" size={26} color="#e53935" />
-            </TouchableOpacity>
-
-            {/* 🔴 Dot + Label + Timer */}
-            <View style={styles.recordingIndicatorRow}>
-              <View style={styles.recordingDot} />
-              <Text style={styles.recordingText}>Recording</Text>
-              <Text style={styles.recordingTimer}>{recordTime}</Text>
-            </View>
-
-            {/* ✅ Send */}
-            <TouchableOpacity
-              onPress={onStopAndSendRecord}
-              style={styles.recordingSendBtn}
-            >
-              <Icon name="send" size={22} color="#fff" />
-            </TouchableOpacity>
-
-          </View>
-        )}
-
-        {/* ══════════════════════════════════════
-          INPUT ROW
-          Hidden while recording
-        ══════════════════════════════════════ */}
-        {!isRecording && (
-          <View style={styles.inputWrapper}>
-            <TouchableOpacity
-              onPress={() => {
-                closeEmojiPicker();
-                setShowAttachmentMenu(true);
-              }}
-              style={styles.attachmentButton}
-            >
-              <Icon name="attach-file" size={24} color="#667781" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={toggleEmojiPicker}
-              style={styles.emojiToggleButton}
-            >
-              <Icon name="emoji-emotions" size={24} color="#667781" />
-            </TouchableOpacity>
-
-            <TextInput
-              style={styles.textInput}
-              value={newMessage}
-              onChangeText={(text) => {
-                setNewMessage(text);
-                closeEmojiPicker();
-              }}
-              placeholder="Type a message..."
-              placeholderTextColor="#999"
-              multiline
-              maxLength={5000}
-              onFocus={closeEmojiPicker}
-            />
-
-            {newMessage.trim() ? (
-              // ✅ SEND BUTTON (when typing)
-              <TouchableOpacity
-                onPress={handleSend}
-                style={styles.sendButton}
-                disabled={isSending}
-              >
-                {isSending ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Icon name="send" size={22} color="#fff" />
-                )}
-              </TouchableOpacity>
-            ) : (
-              // 🎤 MIC BUTTON (when no text) — tap to start recording
-              <TouchableOpacity
-                onPress={onStartRecord}
-                style={[styles.sendButton, { backgroundColor: '#25D366' }]}
-              >
-                <Icon name="mic" size={22} color="#fff" />
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-
-        {/* ══════════════════════════════════════
-          OPTIONS MENU MODAL
-        ══════════════════════════════════════ */}
-        <Modal
-          visible={showOptionsMenu}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setShowOptionsMenu(false)}
-        >
-          <Pressable
-            style={styles.optionsModalOverlay}
-            onPress={() => setShowOptionsMenu(false)}
+          <TouchableOpacity
+            onPress={onStopAndSendRecord}
+            style={styles.recordingSendBtn}
           >
-            <View style={styles.optionsMenuContainer}>
+            <Icon name="send" size={22} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      );
+    }
 
-              {/* 📞 CALL */}
-              <TouchableOpacity
-                style={styles.optionsMenuItem}
-                onPress={handleAudioCall}
-              >
-                <Icon name="call" size={20} color="#075E54" style={styles.optionsMenuIcon} />
-                <Text style={styles.optionsMenuText}>Audio Call</Text>
-              </TouchableOpacity>
+    return (
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'flex-end',
+          backgroundColor: '#ECE5DD',
+          paddingHorizontal: 6,
+          paddingTop: 6,
+          paddingBottom: 8,
+        }}
+      >
+        <TouchableOpacity
+          onPress={() => {
+            closeEmojiPicker();
+            setShowAttachmentMenu(true);
+          }}
+          style={styles.attachmentButton}
+        >
+          <Icon name="attach-file" size={24} color="#667781" />
+        </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.optionsMenuItem}
-                onPress={handleVideoCall}
-              >
-                <Icon name="videocam" size={20} color="#075E54" style={styles.optionsMenuIcon} />
-                <Text style={styles.optionsMenuText}>Video Call</Text>
-              </TouchableOpacity>
+        <TouchableOpacity
+          onPress={toggleEmojiPicker}
+          style={styles.emojiToggleButton}
+        >
+          <Icon name="emoji-emotions" size={24} color="#667781" />
+        </TouchableOpacity>
 
-              {/* 🔍 CHAT TOOLS */}
-              <TouchableOpacity
-                style={styles.optionsMenuItem}
-                onPress={handleSearch}
-              >
-                <Icon name="search" size={20} color="#075E54" style={styles.optionsMenuIcon} />
-                <Text style={styles.optionsMenuText}>Search</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.optionsMenuItem}
-                onPress={handleMedia}
-              >
-                <Icon name="perm-media" size={20} color="#075E54" style={styles.optionsMenuIcon} />
-                <Text style={styles.optionsMenuText}>Media, Links & Docs</Text>
-              </TouchableOpacity>
-
-              {/* 👤 CONTACT */}
-              <TouchableOpacity
-                style={styles.optionsMenuItem}
-                onPress={handleViewContact}
-              >
-                <Icon name="person" size={20} color="#075E54" style={styles.optionsMenuIcon} />
-                <Text style={styles.optionsMenuText}>View Contact</Text>
-              </TouchableOpacity>
-
-              {/* 👥 GROUP */}
-              {/* <TouchableOpacity style={styles.optionsMenuItem} onPress={handleNewGroup}>
-                <Icon name="group-add" size={20} color="#075E54" style={styles.optionsMenuIcon} />
-                <Text style={styles.optionsMenuText}>New Group</Text>
-              </TouchableOpacity> */}
-
-              {/* 🔕 SETTINGS */}
-              <TouchableOpacity
-                style={styles.optionsMenuItem}
-                onPress={handleMute}
-              >
-                <Icon name="notifications-off" size={20} color="#075E54" style={styles.optionsMenuIcon} />
-                <Text style={styles.optionsMenuText}>Mute Notifications</Text>
-              </TouchableOpacity>
-
-              {/* ⚠️ DANGER */}
-              <TouchableOpacity
-                style={styles.optionsMenuItem}
-                onPress={handleReport}
-              >
-                <Icon name="flag" size={20} color="#DC2626" style={styles.optionsMenuIcon} />
-                <Text style={[styles.optionsMenuText, styles.deleteMenuText]}>Report</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.optionsMenuItem}
-                onPress={handleBlock}
-              >
-                <Icon name="block" size={20} color="#DC2626" style={styles.optionsMenuIcon} />
-                <Text style={[styles.optionsMenuText, styles.deleteMenuText]}>Block</Text>
-              </TouchableOpacity>
-
-              {/* <TouchableOpacity style={styles.optionsMenuItem} onPress={() => handleClearChat(setShowOptionsMenu)}>
-                <Icon name="delete-sweep" size={20} color="#DC2626" style={styles.optionsMenuIcon} />
-                <Text style={[styles.optionsMenuText, styles.deleteMenuText]}>Clear Chat</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.optionsMenuItem} onPress={() => handleDeleteChat(setShowOptionsMenu)}>
-                <Icon name="delete" size={20} color="#DC2626" style={styles.optionsMenuIcon} />
-                <Text style={[styles.optionsMenuText, styles.deleteMenuText]}>Delete Chat</Text>
-              </TouchableOpacity> */}
-
-            </View>
-          </Pressable>
-        </Modal>
-
-        {/* ══════════════════════════════════════
-          ATTACHMENT MENU
-        ══════════════════════════════════════ */}
-        <AttachmentMenu
-          visible={showAttachmentMenu}
-          onClose={() => setShowAttachmentMenu(false)}
-          onSelectOption={handleAttachmentPress}
+        <TextInput
+          ref={inputRef}
+          style={[
+            styles.textInput,
+            {
+              flex: 1,
+              maxHeight: 100,
+              minHeight: 40,
+              backgroundColor: '#FFFFFF',
+              borderRadius: 20,
+              paddingHorizontal: 14,
+              paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+              fontSize: 16,
+              color: '#333',
+            },
+          ]}
+          value={newMessage}
+          onChangeText={(text) => {
+            setNewMessage(text);
+            closeEmojiPicker();
+          }}
+          placeholder="Type a message..."
+          placeholderTextColor="#999"
+          multiline
+          maxLength={5000}
+          onFocus={() => {
+            closeEmojiPicker();
+            setTimeout(() => scrollToBottom(false), 150);
+          }}
         />
 
-        {/* ══════════════════════════════════════
-          FULL-SCREEN IMAGE VIEWER
-        ══════════════════════════════════════ */}
-        <Modal visible={!!selectedImage} transparent animationType="fade">
-          <View style={styles.imageViewerOverlay}>
+        {newMessage.trim() ? (
+          <TouchableOpacity
+            onPress={handleSend}
+            style={styles.sendButton}
+            disabled={isSending}
+          >
+            {isSending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Icon name="send" size={22} color="#fff" />
+            )}
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity onPress={onStartRecord} style={styles.micButton}>
+            <Icon name="mic" size={24} color="#667781" />
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  return (
+    <SafeAreaView
+      edges={['top', 'bottom']}
+      style={{ flex: 1, backgroundColor: '#075E54' }}>
+      <StatusBar backgroundColor="#075E54" barStyle="light-content" />
+
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
+
+        <View style={{ flex: 1, backgroundColor: '#ECE5DD' }}>
+          {/* ══════════ HEADER ══════════ */}
+          <View style={styles.header}>
             <TouchableOpacity
-              style={styles.imageViewerClose}
-              onPress={closeImage}
+              onPress={() => navigation.goBack()}
+              style={styles.backButton}
             >
-              <Icon name="close" size={28} color="#fff" />
+              <Icon name="arrow-back" size={24} color="#FFFFFF" />
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.imageViewerDownload}
-              onPress={() =>
-                downloadFile(selectedImage, `image_${Date.now()}.jpg`, 'viewer')
-              }
-            >
-              <Icon name="download" size={26} color="#fff" />
-            </TouchableOpacity>
-            {selectedImage && (
-              <Image
-                source={{ uri: selectedImage }}
-                style={styles.fullScreenImage}
-                resizeMode="contain"
-                onLoadStart={() => onImageLoadStart('viewer')}
-                onLoadEnd={() => onImageLoadEnd('viewer')}
-                onError={() => onImageError('viewer')}
+
+            <View style={styles.headerContent}>
+              <View style={styles.headerAvatarContainer}>
+                <View
+                  style={[
+                    styles.headerAvatar,
+                    isOnline && styles.onlineAvatar,
+                    { backgroundColor: avatarColor },
+                  ]}
+                >
+                  <Text style={styles.headerAvatarText}>{avatarChar}</Text>
+                </View>
+                {isOnline && <View style={styles.headerOnlineIndicator} />}
+              </View>
+              <View style={styles.headerTextContainer}>
+                <Text style={styles.headerTitle}>{displayName}</Text>
+                <Text style={styles.headerSubtitle}>
+                  {isOnline ? 'Online' : 'Last seen recently'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                onPress={() => setShowOptionsMenu(true)}
+                style={styles.headerActionButton}
+              >
+                <Icon name="more-vert" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* ══════════ MESSAGES AREA ══════════ */}
+          <View style={{ flex: 1, backgroundColor: '#ECE5DD' }}>
+            {showNewMessageBadge && (
+              <TouchableOpacity
+                style={styles.newMessageBadge}
+                onPress={() => {
+                  scrollToBottom();
+                  setShowNewMessageBadge(false);
+                }}
+              >
+                <Icon name="arrow-downward" size={14} color="#fff" />
+                <Text style={styles.newMessageBadgeText}>New Messages</Text>
+              </TouchableOpacity>
+            )}
+
+            {loading ? (
+              <View style={styles.messagesLoadingContainer}>
+                <ActivityIndicator size="large" color="#075E54" />
+                <Text style={styles.loadingText}>Loading messages...</Text>
+              </View>
+            ) : (
+              <FlatList
+                ref={flatListRef}
+                data={[...messages].reverse()}
+                renderItem={renderMessageItem}
+                keyExtractor={(item, index) =>
+                  item.id ? item.id.toString() : `temp-${index}`
+                }
+                inverted
+                extraData={currentUser}
+                contentContainerStyle={[
+                  styles.messageList,
+                  {
+                    paddingBottom: showEmojiPicker
+                      ? Math.max(insets.bottom, 2)
+                      : isKeyboardVisible
+                        ? 0
+                        : 4,
+                  },
+                ]}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                scrollEventThrottle={16}
+                onScroll={handleScroll}
+                onEndReached={() => {
+                  if (
+                    hasMoreMessages &&
+                    !loadingOlderMessages &&
+                    messages.length > 0
+                  ) {
+                    loadOlderMessages();
+                  }
+                }}
+                onEndReachedThreshold={0.2}
+                ListFooterComponent={renderLoadingHeader}
+                ListEmptyComponent={
+                  <View style={styles.emptyMessagesContainer}>
+                    <Text style={styles.emptyMessagesText}>No messages yet</Text>
+                    <Text style={styles.emptyMessagesSubtext}>
+                      Start the conversation by sending a message below
+                    </Text>
+                  </View>
+                }
               />
             )}
           </View>
-        </Modal>
 
-        {/* ══════════════════════════════════════
-          FULL-SCREEN VIDEO VIEWER
-        ══════════════════════════════════════ */}
-        <Modal visible={!!selectedVideo} transparent animationType="fade">
-          <View style={styles.fullScreenContainer}>
-            <TouchableOpacity
-              style={styles.imageViewerClose}
-              onPress={closeVideo}
-            >
-              <Icon name="close" size={28} color="#fff" />
-            </TouchableOpacity>
-            {/*
-              Connect react-native-video here:
-              <Video source={{ uri: selectedVideo }} style={styles.fullScreenVideo} controls />
-            */}
-            <Text style={styles.videoPlaceholderText}>
-              Connect react-native-video here
-            </Text>
+          {/* ══════════ INPUT + EMOJI AREA ══════════ */}
+          {renderEmojiPicker()}
+
+          <View
+            style={[
+              styles.bottomInputWrapper,
+              { paddingBottom: 0 }
+            ]}
+          >
+            {renderInputRow()}
           </View>
-        </Modal>
+        </View>
+      </KeyboardAvoidingView>
 
-      </View>
-    </KeyboardAvoidingView>
+      {/* ══════════ ALL MODALS ══════════ */}
+      <Modal
+        visible={showOptionsMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowOptionsMenu(false)}
+      >
+        <Pressable
+          style={styles.optionsModalOverlay}
+          onPress={() => setShowOptionsMenu(false)}
+        >
+          <View style={styles.optionsMenuContainer}>
+            <TouchableOpacity
+              style={styles.optionsMenuItem}
+              onPress={handleAudioCall}
+            >
+              <Icon
+                name="call"
+                size={20}
+                color="#075E54"
+                style={styles.optionsMenuIcon}
+              />
+              <Text style={styles.optionsMenuText}>Audio Call</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.optionsMenuItem}
+              onPress={handleVideoCall}
+            >
+              <Icon
+                name="videocam"
+                size={20}
+                color="#075E54"
+                style={styles.optionsMenuIcon}
+              />
+              <Text style={styles.optionsMenuText}>Video Call</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.optionsMenuItem}
+              onPress={handleSearch}
+            >
+              <Icon
+                name="search"
+                size={20}
+                color="#075E54"
+                style={styles.optionsMenuIcon}
+              />
+              <Text style={styles.optionsMenuText}>Search</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.optionsMenuItem}
+              onPress={handleMedia}
+            >
+              <Icon
+                name="perm-media"
+                size={20}
+                color="#075E54"
+                style={styles.optionsMenuIcon}
+              />
+              <Text style={styles.optionsMenuText}>Media, Links & Docs</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.optionsMenuItem}
+              onPress={handleViewContact}
+            >
+              <Icon
+                name="person"
+                size={20}
+                color="#075E54"
+                style={styles.optionsMenuIcon}
+              />
+              <Text style={styles.optionsMenuText}>View Contact</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.optionsMenuItem}
+              onPress={handleMute}
+            >
+              <Icon
+                name="notifications-off"
+                size={20}
+                color="#075E54"
+                style={styles.optionsMenuIcon}
+              />
+              <Text style={styles.optionsMenuText}>Mute Notifications</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.optionsMenuItem}
+              onPress={handleReport}
+            >
+              <Icon
+                name="flag"
+                size={20}
+                color="#DC2626"
+                style={styles.optionsMenuIcon}
+              />
+              <Text style={[styles.optionsMenuText, styles.deleteMenuText]}>
+                Report
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.optionsMenuItem}
+              onPress={handleBlock}
+            >
+              <Icon
+                name="block"
+                size={20}
+                color="#DC2626"
+                style={styles.optionsMenuIcon}
+              />
+              <Text style={[styles.optionsMenuText, styles.deleteMenuText]}>
+                Block
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
+      <AttachmentMenu
+        visible={showAttachmentMenu}
+        onClose={() => setShowAttachmentMenu(false)}
+        onSelectOption={handleAttachmentPress}
+      />
+
+      <Modal visible={!!selectedImage} transparent animationType="fade">
+        <View style={styles.imageViewerOverlay}>
+          <TouchableOpacity
+            style={styles.imageViewerClose}
+            onPress={closeImage}
+          >
+            <Icon name="close" size={28} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.imageViewerDownload}
+            onPress={() =>
+              downloadFile(selectedImage, `image_${Date.now()}.jpg`, 'viewer')
+            }
+          >
+            <Icon name="download" size={26} color="#fff" />
+          </TouchableOpacity>
+          {selectedImage && (
+            <Image
+              source={{ uri: selectedImage }}
+              style={styles.fullScreenImage}
+              resizeMode="contain"
+              onLoadStart={() => onImageLoadStart('viewer')}
+              onLoadEnd={() => onImageLoadEnd('viewer')}
+              onError={() => onImageError('viewer')}
+            />
+          )}
+        </View>
+      </Modal>
+
+      <Modal visible={!!selectedVideo} transparent animationType="fade">
+        <View style={styles.fullScreenContainer}>
+          <TouchableOpacity
+            style={styles.imageViewerClose}
+            onPress={closeVideo}
+          >
+            <Icon name="close" size={28} color="#fff" />
+          </TouchableOpacity>
+
+          {selectedVideo && (
+            <Video
+              source={{ uri: selectedVideo }}
+              style={styles.fullScreenVideo}
+              resizeMode="contain"
+              controls={true}
+              paused={false}
+              repeat={false}
+              onError={(error) => console.log('Video error:', error)}
+              onLoadStart={() => console.log('Video loading...')}
+              onLoad={() => console.log('Video loaded')}
+            />
+          )}
+        </View>
+      </Modal>
+
+    </SafeAreaView>
   );
 };
 

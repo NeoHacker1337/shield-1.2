@@ -168,6 +168,7 @@ const ChatSystemScreen = ({ navigation }) => {
         syncingContacts={h.syncingContacts}
         onSyncContacts={h.handleSyncContacts}
         onInvite={h.handleInviteForChat}
+       onViewAllInvitations={() => navigation.navigate('AllInvitations')}
       />
 
       <LockPinModal
