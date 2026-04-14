@@ -38,6 +38,7 @@ import RecoverPinScreen from './src/screens/Auth/RecoverPinScreen';
 import RestoreScreen from './src/screens/FileLocker/RestoreScreen';
 import StorageDataScreen from './src/screens/FileLocker/StorageDataScreen';
 import AllInvitationsScreen from './src/screens/Dashboard/AllInvitationsScreen';
+import ScanScreen from './src/screens/Dashboard/ScanScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -168,6 +169,8 @@ const App = () => {
             <Stack.Screen name="Restore" component={RestoreScreen} options={{ headerShown: false }} />
             <Stack.Screen name="StorageData" component={StorageDataScreen} options={{ headerShown: false }} />
             <Stack.Screen name="AllInvitations" component={AllInvitationsScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Scan" component={ScanScreen} options={{ headerShown: false }} />
+            
           </Stack.Navigator>
         </NavigationContainer>
       </SecurityVisibilityProvider>

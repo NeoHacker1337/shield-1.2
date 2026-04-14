@@ -1,4 +1,19 @@
-import React, { useState, useRef, useEffect } from 'react';
+/**
+ * SecurityScreen.js
+ *
+ * Displays security feature cards (login password, chat hide/lock, security hide).
+ * Each feature card opens a PIN modal to set / change / remove its PIN.
+ *
+ * Safe-area integration via react-native-safe-area-context.
+ * Style helpers imported from SecurityScreenStyles.js (updated version).
+ */
+
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+} from 'react';
 import {
   View,
   Text,
@@ -6,15 +21,22 @@ import {
   ScrollView,
   Animated,
   BackHandler,
-  Dimensions,
   TouchableWithoutFeedback,
-  Easing
+  Easing,
 } from 'react-native';
-
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import CustomDrawerContent from '../../components/CustomDrawerContent';
-import styles from '../../assets/SecurityScreenStyles';
+import { Colors } from '../../assets/theme';
+import styles, {
+  DRAWER_WIDTH,
+  getContentTopPadding,
+  getContentBottomPadding,
+  getMenuButtonTopOffset,
+  getDrawerInsets,
+} from '../../assets/SecurityScreenStyles';
+
 import ForgotPinModal from '../securityFeatures/ForgotPinModal';
 import AuthService from '../../services/AuthService';
 import { checkAndRequestCallPermission } from '../../utils/permissions';
@@ -28,7 +50,7 @@ import {
   LOGIN_AUTH_SERVICE,
   CHAT_HIDE_SERVICE,
   CHAT_LOCK_SERVICE,
-  SECURITY_HIDE_SERVICE
+  SECURITY_HIDE_SERVICE,
 } from '../../services/pinService';
 
 /* FEATURES */
@@ -42,201 +64,258 @@ import SecurityHideFeature from '../securityFeatures/SecurityHideFeature';
 import PinModal from '../securityFeatures/PinModal';
 import PasswordModal from '../securityFeatures/PasswordModal';
 import EmailOtpPasswordModal from '../securityFeatures/EmailOtpPasswordModal';
-const { width: screenWidth } = Dimensions.get('window');
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Maps a feature key to its Keychain service identifier.
+ * Single source of truth — used in openModal, handlePinSubmit, handleBackPress.
+ */
+const FEATURE_SERVICE_MAP = {
+  passcode: LOGIN_AUTH_SERVICE,
+  chatHide: CHAT_HIDE_SERVICE,
+  chatLock: CHAT_LOCK_SERVICE,
+  securityHide: SECURITY_HIDE_SERVICE,
+};
+
+/** All modal visibility keys — used to drive handleBackPress generically. */
+const MODAL_KEYS = ['passcode', 'chatHide', 'chatLock', 'securityHide'];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT
+// ─────────────────────────────────────────────────────────────────────────────
 const SecurityScreen = ({ navigation }) => {
 
-  /* ---------------- DRAWER STATE ---------------- */
+  // ── Safe area ──────────────────────────────────────────────────────────────
+  const insets = useSafeAreaInsets();
 
+  // ── Mount guard (prevents setState after unmount in async handlers) ────────
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => { isMountedRef.current = false; };
+  }, []);
+
+  // ── Drawer state ───────────────────────────────────────────────────────────
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const drawerWidth = screenWidth * 0.75;
-  const drawerOffset = useRef(new Animated.Value(-drawerWidth)).current;
+  /**
+   * Ref mirror of drawerOpen — used in BackHandler to avoid stale closure.
+   * BackHandler is registered once; without a ref it always sees the initial value.
+   */
+  const drawerOpenRef = useRef(false);
+  useEffect(() => { drawerOpenRef.current = drawerOpen; }, [drawerOpen]);
+
+  const drawerOffset = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
 
-  /* ---------------- STATE ---------------- */
-
+  // ── PIN existence state ────────────────────────────────────────────────────
   const [hasPasscode, setHasPasscode] = useState(false);
   const [hasChatHidePin, setHasChatHidePin] = useState(false);
   const [hasChatLockPin, setHasChatLockPin] = useState(false);
   const [hasSecurityHidePin, setHasSecurityHidePin] = useState(false);
 
-  const [passcodeModalVisible, setPasscodeModalVisible] = useState(false);
-  const [chatHideModalVisible, setChatHideModalVisible] = useState(false);
-  const [chatLockModalVisible, setChatLockModalVisible] = useState(false);
-  const [securityHideModalVisible, setSecurityHideModalVisible] = useState(false);
+  // ── Modal visibility state ─────────────────────────────────────────────────
+  /**
+   * Using an object instead of 4 separate booleans:
+   *   - Easier to reset all at once
+   *   - Drives handleBackPress generically (no stale-closure-prone if-chains)
+   *   - Scales if more modals are added
+   */
+  const [modalVisible, setModalVisible] = useState({
+    passcode: false,
+    chatHide: false,
+    chatLock: false,
+    securityHide: false,
+  });
 
-  const [mode, setMode] = useState('set');
+  /**
+   * Ref mirror of modalVisible — same stale-closure fix as drawerOpenRef.
+   */
+  const modalVisibleRef = useRef(modalVisible);
+  useEffect(() => { modalVisibleRef.current = modalVisible; }, [modalVisible]);
 
+  // ── PIN modal shared state ─────────────────────────────────────────────────
+  const [mode, setMode] = useState('set');   // 'set' | 'change' | 'remove'
   const [pinValue, setPinValue] = useState('');
   const [pinStep, setPinStep] = useState(1);
   const [firstPin, setFirstPin] = useState('');
+  const [pinError, setPinError] = useState('');
 
+  // ── Forgot PIN state ───────────────────────────────────────────────────────
+  const [forgotVisible, setForgotVisible] = useState(false);
+  const [forgotService, setForgotService] = useState(null);
+
+  // ── Email OTP modal ────────────────────────────────────────────────────────
+  const [emailModalVisible, setEmailModalVisible] = useState(false);
+
+  // ── Entry animations ───────────────────────────────────────────────────────
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
   const modalAnim = useRef(new Animated.Value(0)).current;
 
-  const [pinError, setPinError] = useState('');
-  const [forgotVisible, setForgotVisible] = useState(false);
-  const [forgotService, setForgotService] = useState(null);
-  const [emailModalVisible, setEmailModalVisible] = useState(false);
-  /* ---------------- LIFECYCLE ---------------- */
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EFFECTS
+  // ═══════════════════════════════════════════════════════════════════════════
 
+  // Mount: permissions + PIN check + entry animation + back handler
   useEffect(() => {
-
-    checkPins();
     checkAndRequestCallPermission();
+    checkPins();
 
     Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 500,
-        useNativeDriver: true
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 500,
-        useNativeDriver: true
-      })
+      Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
     ]).start();
 
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
-      handleBackPress
+      handleBackPress,
     );
 
-    return () => backHandler.remove();
-
+    return () => {
+      backHandler.remove();
+      fadeAnim.stopAnimation();
+      slideAnim.stopAnimation();
+      drawerOffset.stopAnimation();
+      overlayOpacity.stopAnimation();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---------------- DRAWER ANIMATION ---------------- */
-
+  // Drawer open/close animation
   useEffect(() => {
-
     Animated.parallel([
       Animated.timing(drawerOffset, {
-        toValue: drawerOpen ? 0 : -drawerWidth,
+        toValue: drawerOpen ? 0 : -DRAWER_WIDTH,
         duration: 300,
         useNativeDriver: true,
-        easing: Easing.inOut(Easing.ease)
+        easing: Easing.inOut(Easing.ease),
       }),
       Animated.timing(overlayOpacity, {
         toValue: drawerOpen ? 0.7 : 0,
         duration: 300,
-        useNativeDriver: true
-      })
+        useNativeDriver: true,
+      }),
     ]).start();
-
   }, [drawerOpen]);
 
-  /* ---------------- CHECK PIN EXISTENCE ---------------- */
+  // ═══════════════════════════════════════════════════════════════════════════
+  // HANDLERS
+  // ═══════════════════════════════════════════════════════════════════════════
 
+  // ── Check PIN existence ───────────────────────────────────────────────────
   const checkPins = async () => {
-
-    setHasPasscode(await AuthService.hasPasscode());
-    setHasChatHidePin(await hasPin(CHAT_HIDE_SERVICE));
-    setHasChatLockPin(await hasPin(CHAT_LOCK_SERVICE));
-    setHasSecurityHidePin(await hasPin(SECURITY_HIDE_SERVICE));
-
+    try {
+      const [passcode, chatHide, chatLock, secHide] = await Promise.all([
+        AuthService.hasPasscode(),
+        hasPin(CHAT_HIDE_SERVICE),
+        hasPin(CHAT_LOCK_SERVICE),
+        hasPin(SECURITY_HIDE_SERVICE),
+      ]);
+      if (!isMountedRef.current) return;
+      setHasPasscode(passcode);
+      setHasChatHidePin(chatHide);
+      setHasChatLockPin(chatLock);
+      setHasSecurityHidePin(secHide);
+    } catch (e) {
+      console.warn('[SecurityScreen] checkPins error:', e);
+    }
   };
 
-  /* ---------------- BACK HANDLER ---------------- */
-
-  const handleBackPress = () => {
-
-    if (drawerOpen) {
+  // ── Back handler (uses refs — no stale closure) ───────────────────────────
+  /**
+   * useCallback with empty deps: stable reference for BackHandler.
+   * Reads current values via refs, never from closed-over state.
+   */
+  const handleBackPress = useCallback(() => {
+    // Close drawer first if open
+    if (drawerOpenRef.current) {
       setDrawerOpen(false);
       return true;
     }
 
-    if (passcodeModalVisible) {
-      setPasscodeModalVisible(false);
-      return true;
-    }
-
-    if (chatHideModalVisible) {
-      setChatHideModalVisible(false);
-      return true;
-    }
-
-    if (chatLockModalVisible) {
-      setChatLockModalVisible(false);
-      return true;
-    }
-
-    if (securityHideModalVisible) {
-      setSecurityHideModalVisible(false);
+    // Close whichever modal is currently open (data-driven, not if-chain)
+    const openKey = MODAL_KEYS.find(k => modalVisibleRef.current[k]);
+    if (openKey) {
+      setModalVisible(prev => ({ ...prev, [openKey]: false }));
+      setPinError('');
       return true;
     }
 
     return false;
-  };
+  }, []);
 
-  /* ---------------- OPEN MODALS ---------------- */
-
+  // ── Open a modal for a given feature + mode ───────────────────────────────
+  /**
+   * Replaced 4 sequential `if` statements with an object map lookup.
+   *
+   * @param {'passcode'|'chatHide'|'chatLock'|'securityHide'} feature
+   * @param {'set'|'change'|'remove'} modalMode
+   */
   const openModal = (feature, modalMode) => {
-
     setMode(modalMode);
     setPinValue('');
     setFirstPin('');
     setPinStep(1);
     setPinError('');
 
-    modalAnim.setValue(0);
+    // Stop any in-progress animation before resetting
+    modalAnim.stopAnimation(() => {
+      modalAnim.setValue(0);
+      Animated.timing(modalAnim, {
+        toValue: 1,
+        duration: 250,
+        useNativeDriver: true,
+      }).start();
+    });
 
-    Animated.timing(modalAnim, {
-      toValue: 1,
-      duration: 250,
-      useNativeDriver: true
-    }).start();
-
-    if (feature === 'passcode') setPasscodeModalVisible(true);
-    if (feature === 'chatHide') setChatHideModalVisible(true);
-    if (feature === 'chatLock') setChatLockModalVisible(true);
-    if (feature === 'securityHide') setSecurityHideModalVisible(true);
-
+    setModalVisible(prev => ({ ...prev, [feature]: true }));
   };
 
-  /* ---------------- CLOSE ALL MODALS ---------------- */
-
+  // ── Close all modals + reset shared PIN state ─────────────────────────────
   const closeAllModals = () => {
-    setPasscodeModalVisible(false);
-    setChatHideModalVisible(false);
-    setChatLockModalVisible(false);
-    setSecurityHideModalVisible(false);
+    setModalVisible({
+      passcode: false,
+      chatHide: false,
+      chatLock: false,
+      securityHide: false,
+    });
     setPinValue('');
     setFirstPin('');
     setPinStep(1);
     setPinError('');
   };
 
-  /* ---------------- PIN SUBMIT ---------------- */
-
+  // ── PIN submit ────────────────────────────────────────────────────────────
+  /**
+   * Handles set / change / remove modes.
+   *
+   * Bug fix: `mode === 'set'` and `mode === 'change'` had 100% identical logic.
+   * Merged into a single `['set', 'change'].includes(mode)` branch.
+   */
   const handlePinSubmit = async () => {
-
     if (pinValue.length !== 6) return;
 
-    let service = null;
-
-    if (passcodeModalVisible) service = LOGIN_AUTH_SERVICE;
-    if (chatHideModalVisible) service = CHAT_HIDE_SERVICE;
-    if (chatLockModalVisible) service = CHAT_LOCK_SERVICE;
-    if (securityHideModalVisible) service = SECURITY_HIDE_SERVICE;
-
+    // Derive active service from whichever modal is visible
+    const activeKey = MODAL_KEYS.find(k => modalVisible[k]);
+    const service = activeKey ? FEATURE_SERVICE_MAP[activeKey] : null;
     if (!service) return;
 
-    /* ---- SET MODE ---- */
-    if (mode === 'set') {
+    try {
+      // ── SET or CHANGE ────────────────────────────────────────────────────
+      if (mode === 'set' || mode === 'change') {
 
-      if (pinStep === 1) {
-        setFirstPin(pinValue);
-        setPinValue('');
-        setPinStep(2);
-        return;
-      }
+        // Step 1: capture first entry
+        if (pinStep === 1) {
+          setFirstPin(pinValue);
+          setPinValue('');
+          setPinStep(2);
+          return;
+        }
 
-      if (pinStep === 2) {
-
+        // Step 2: confirm entry
         if (pinValue !== firstPin) {
           setPinValue('');
           setFirstPin('');
@@ -245,141 +324,175 @@ const SecurityScreen = ({ navigation }) => {
           return;
         }
 
+        // Confirmed — save
         if (service === LOGIN_AUTH_SERVICE) {
           await AuthService.setPasscode(pinValue);
         } else {
           await savePin(service, pinValue);
         }
 
+        if (!isMountedRef.current) return;
         await checkPins();
         closeAllModals();
-      }
-
-      return;
-    }
-
-    /* ---- CHANGE MODE ---- */
-    if (mode === 'change') {
-
-      if (pinStep === 1) {
-        setFirstPin(pinValue);
-        setPinValue('');
-        setPinStep(2);
         return;
       }
 
-      if (pinStep === 2) {
-
-        if (pinValue !== firstPin) {
-          setPinValue('');
-          setFirstPin('');
-          setPinStep(1);
-          setPinError('PINs do not match. Please try again.');
-          return;
-        }
+      // ── REMOVE ──────────────────────────────────────────────────────────
+      if (mode === 'remove') {
+        let isValid = false;
 
         if (service === LOGIN_AUTH_SERVICE) {
-          await AuthService.setPasscode(pinValue);
+          isValid = await AuthService.verifyPasscode(pinValue);
         } else {
-          await savePin(service, pinValue);
+          const verifyResult = await verifyPin(service, pinValue);
+          isValid = verifyResult.success;   // extract boolean from object
         }
 
+        if (!isValid) {
+          if (!isMountedRef.current) return;
+          setPinValue('');
+          setPinError('Incorrect PIN. Please try again.');
+          return;   // stay in modal, don't remove
+        }
+
+        setPinError('');
+
+        if (service === LOGIN_AUTH_SERVICE) {
+          await AuthService.removePasscode();
+        } else {
+          await removePin(service);
+        }
+
+        if (!isMountedRef.current) return;
         await checkPins();
         closeAllModals();
       }
 
-      return;
+    } catch (e) {
+      console.warn('[SecurityScreen] handlePinSubmit error:', e);
+      if (isMountedRef.current) {
+        setPinError('An error occurred. Please try again.');
+      }
     }
-
-    /* ---- REMOVE MODE ---- */
-    if (mode === 'remove') {
-
-      let isValid = false;
-
-      if (service === LOGIN_AUTH_SERVICE) {
-        isValid = await AuthService.verifyPasscode(pinValue);
-      } else {
-        const verifyResult = await verifyPin(service, pinValue);
-        isValid = verifyResult.success;   // ← fix: extract boolean from object
-      }
-
-      if (!isValid) {
-        setPinValue('');
-        setPinError('Incorrect PIN. Please try again.');
-        return;   // ← stay in modal, don't remove
-      }
-
-      setPinError('');
-
-      if (service === LOGIN_AUTH_SERVICE) {
-        await AuthService.removePasscode();
-      } else {
-        await removePin(service);
-      }
-
-      await checkPins();
-      closeAllModals();
-
-      return;
-    }
-
   };
 
-  /* ── ✅ PATCH: Forgot PIN handler (called by each PinModal) ── */
+  // ── Forgot PIN ────────────────────────────────────────────────────────────
   const handleForgotPin = (svc) => {
-    closeAllModals();                    // close the active PIN modal first
+    closeAllModals();          // close the active PIN modal first
     setForgotService(svc);
     setForgotVisible(true);
   };
 
-  /* ---------------- RENDER ---------------- */
+  // ── Modal close helper ────────────────────────────────────────────────────
+  /**
+   * Closes a single modal by key and resets PIN error.
+   * Used inline in PinModal onClose props.
+   */
+  const closeSingleModal = (key) => {
+    setModalVisible(prev => ({ ...prev, [key]: false }));
+    setPinError('');
+  };
+
+  // ── PIN modal title helper ────────────────────────────────────────────────
+  /**
+   * Derives the modal title from mode + step + feature label.
+   *
+   * @param {string} featureLabel  e.g. 'Passcode', 'Chat Hide PIN'
+   * @returns {string}
+   */
+  const getPinModalTitle = (featureLabel) => {
+    if (mode === 'remove') return `Enter ${featureLabel} to Remove`;
+    return pinStep === 1
+      ? `Enter ${featureLabel}`
+      : `Confirm ${featureLabel}`;
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** Shared props passed to every PinModal instance */
+  const sharedPinModalProps = {
+    description: 'Enter your 6-digit PIN',
+    modalAnim,
+    currentValue: pinValue,
+    onInput: setPinValue,
+    onSubmit: handlePinSubmit,
+    error: pinError,
+    onForgotPin: handleForgotPin,
+    showForgotPin: mode === 'remove',
+  };
 
   return (
     <View style={styles.container}>
 
-      {/* Drawer Overlay */}
-      {drawerOpen && (
-        <TouchableWithoutFeedback onPress={() => setDrawerOpen(false)}>
-          <Animated.View
-            style={[styles.drawerOverlay, { opacity: overlayOpacity }]}
-          />
-        </TouchableWithoutFeedback>
-      )}
+      {/* ── Drawer Overlay ───────────────────────────────────────────────────
+          Always rendered — pointerEvents off when drawer is closed.
+          Keeps Animated.Value mounted so opacity animation always has a target.
+      ─────────────────────────────────────────────────────────────────────── */}
+      <TouchableWithoutFeedback onPress={() => setDrawerOpen(false)}>
+        <Animated.View
+          style={[styles.drawerOverlay, { opacity: overlayOpacity }]}
+          pointerEvents={drawerOpen ? 'auto' : 'none'}
+        />
+      </TouchableWithoutFeedback>
 
-      {/* Drawer */}
+      {/* ── Drawer Panel ─────────────────────────────────────────────────── */}
       <Animated.View
         style={[
           styles.drawerContainer,
-          { width: drawerWidth, transform: [{ translateX: drawerOffset }] },
+          { transform: [{ translateX: drawerOffset }] },
         ]}
+        accessibilityViewIsModal={drawerOpen}
       >
-        <CustomDrawerContent
-          navigation={navigation}
-          onClose={() => setDrawerOpen(false)}
-        />
+        {/*
+          Apply getDrawerInsets() to the inner content view so the background
+          fills edge-to-edge while content stays within safe areas.
+        */}
+        <View style={[styles.drawerInnerContent, getDrawerInsets(insets)]}>
+          <CustomDrawerContent
+            navigation={navigation}
+            onClose={() => setDrawerOpen(false)}
+          />
+        </View>
       </Animated.View>
 
-      {/* Main Content */}
-      <ScrollView contentContainerStyle={styles.contentContainer}>
-
-        {/* Menu Button */}
+      {/* ── Main Scroll Content ───────────────────────────────────────────── */}
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={[
+          styles.contentContainer,
+          {
+            // Dynamic safe-area padding — replaces hardcoded paddingTop/Bottom
+            paddingTop: getContentTopPadding(insets.top),
+            paddingBottom: getContentBottomPadding(insets.bottom),
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── Floating Menu Button ─────────────────────────────────────── */}
         <TouchableOpacity
-          style={styles.menuButton}
+          style={[
+            styles.menuButton,
+            // Dynamic top offset — replaces hardcoded top: 16
+            { top: getMenuButtonTopOffset(insets.top) },
+          ]}
           onPress={() => setDrawerOpen(true)}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Open navigation menu"
         >
-          <Icon name="menu" size={26} color="#fff" />
+          <Icon name="menu" size={26} color={Colors.textPrimary} />
         </TouchableOpacity>
 
+        {/* ── Animated content wrapper ──────────────────────────────────── */}
         <Animated.View
           style={{
             opacity: fadeAnim,
-            transform: [{ translateY: slideAnim }]
+            transform: [{ translateY: slideAnim }],
           }}
         >
-
-          <Text style={styles.headerTitle}>
-            Security Settings
-          </Text>
+          <Text style={styles.headerTitle}>Security Settings</Text>
 
           {/* LOGIN PASSWORD */}
           <LoginPasswordFeature
@@ -387,120 +500,77 @@ const SecurityScreen = ({ navigation }) => {
             openPasswordModal={() => setEmailModalVisible(true)}
           />
 
-
           {/* PASSCODE LOGIN */}
-{/* 
+          {/*           
           <PasscodeFeature
             hasPasscode={hasPasscode}
             openPasscodeModal={(m) => openModal('passcode', m)}
           /> */}
 
+          {/* CHAT HIDE */}
           <ChatHideFeature
             hasChatHidePin={hasChatHidePin}
             openChatHideModal={(m) => openModal('chatHide', m)}
           />
 
+          {/* CHAT LOCK */}
           <ChatLockFeature
             hasChatLockPin={hasChatLockPin}
             openChatLockModal={(m) => openModal('chatLock', m)}
           />
 
+          {/* SECURITY HIDE */}
           <SecurityHideFeature
             hasSecurityHidePin={hasSecurityHidePin}
             openSecurityHideModal={(m) => openModal('securityHide', m)}
           />
 
         </Animated.View>
-
       </ScrollView>
 
+      {/* ── Email OTP Modal ───────────────────────────────────────────────── */}
       <EmailOtpPasswordModal
         visible={emailModalVisible}
         onClose={() => setEmailModalVisible(false)}
       />
 
+      {/* ── PIN Modals ────────────────────────────────────────────────────── */}
+
       {/* PASSCODE MODAL */}
       <PinModal
-        visible={passcodeModalVisible}
-        onClose={() => { setPasscodeModalVisible(false); setPinError(''); }}
-        title={
-          mode === 'remove'
-            ? 'Enter Passcode to Remove'
-            : pinStep === 1 ? 'Enter Passcode' : 'Confirm Passcode'
-        }
+        {...sharedPinModalProps}
+        visible={modalVisible.passcode}
+        onClose={() => closeSingleModal('passcode')}
+        title={getPinModalTitle('Passcode')}
         description="Enter your 6-digit passcode"
-        modalAnim={modalAnim}
-        currentValue={pinValue}
-        onInput={setPinValue}
-        onSubmit={handlePinSubmit}
-        error={pinError}
-
         service={LOGIN_AUTH_SERVICE}
-        onForgotPin={handleForgotPin}
-        showForgotPin={mode === 'remove'}
       />
 
       {/* CHAT HIDE */}
       <PinModal
-        visible={chatHideModalVisible}
-        onClose={() => { setChatHideModalVisible(false); setPinError(''); }}
-        title={
-          mode === 'remove'
-            ? 'Enter PIN to Remove Chat Hide'
-            : pinStep === 1 ? 'Enter Chat Hide PIN' : 'Confirm Chat Hide PIN'
-        }
-        description="Enter your 6-digit PIN"
-        modalAnim={modalAnim}
-        currentValue={pinValue}
-        onInput={setPinValue}
-        onSubmit={handlePinSubmit}
-        error={pinError}
-
+        {...sharedPinModalProps}
+        visible={modalVisible.chatHide}
+        onClose={() => closeSingleModal('chatHide')}
+        title={getPinModalTitle('Chat Hide PIN')}
         service={CHAT_HIDE_SERVICE}
-        onForgotPin={handleForgotPin}
-        showForgotPin={mode === 'remove'}
       />
 
       {/* CHAT LOCK */}
       <PinModal
-        visible={chatLockModalVisible}
-        onClose={() => { setChatLockModalVisible(false); setPinError(''); }}
-        title={
-          mode === 'remove'
-            ? 'Enter PIN to Remove Chat Lock'
-            : pinStep === 1 ? 'Enter Chat Lock PIN' : 'Confirm Chat Lock PIN'
-        }
-        description="Enter your 6-digit PIN"
-        modalAnim={modalAnim}
-        currentValue={pinValue}
-        onInput={setPinValue}
-        onSubmit={handlePinSubmit}
-        error={pinError}
-
+        {...sharedPinModalProps}
+        visible={modalVisible.chatLock}
+        onClose={() => closeSingleModal('chatLock')}
+        title={getPinModalTitle('Chat Lock PIN')}
         service={CHAT_LOCK_SERVICE}
-        onForgotPin={handleForgotPin}
-        showForgotPin={mode === 'remove'}
       />
 
       {/* SECURITY HIDE */}
       <PinModal
-        visible={securityHideModalVisible}
-        onClose={() => { setSecurityHideModalVisible(false); setPinError(''); }}
-        title={
-          mode === 'remove'
-            ? 'Enter PIN to Remove Security Hide'
-            : pinStep === 1 ? 'Enter Security Hide PIN' : 'Confirm Security Hide PIN'
-        }
-        description="Enter your 6-digit PIN"
-        modalAnim={modalAnim}
-        currentValue={pinValue}
-        onInput={setPinValue}
-        onSubmit={handlePinSubmit}
-        error={pinError}
-
+        {...sharedPinModalProps}
+        visible={modalVisible.securityHide}
+        onClose={() => closeSingleModal('securityHide')}
+        title={getPinModalTitle('Security Hide PIN')}
         service={SECURITY_HIDE_SERVICE}
-        onForgotPin={handleForgotPin}
-        showForgotPin={mode === 'remove'}
       />
 
       {/* ✅ PATCH: ForgotPinModal — top-level, never nested inside another Modal */}

@@ -22,6 +22,7 @@ api.interceptors.request.use(
 );
 
 const chatService = {
+
   getChatRooms: async () => {
     const response = await api.get('/v1/chat-rooms');
     return response.data;
@@ -52,6 +53,11 @@ const chatService = {
         console.error('Error fetching contacts:', error);
         throw error;
       });
+  },
+
+  // for Edit
+  editMessage: (roomId, messageId, data) => {
+    return api.put(`/v1/chat-rooms/${roomId}/messages/${messageId}`, data);
   },
 
   // Create a one‑to‑one chat room

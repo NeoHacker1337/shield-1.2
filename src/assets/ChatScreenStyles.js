@@ -1,24 +1,76 @@
 import { StyleSheet, Platform } from 'react-native';
 
+// ─── Design Tokens ────────────────────────────────────────────────────────────
+// Centralizing brand colors here means a single change propagates everywhere.
+// To retheme the app, update only this section.
+const COLORS = {
+  // Brand
+  primaryDark:    '#075E54',   // Header, accents
+  primaryMid:     '#128C7E',   // File container, audio
+  primaryLight:   '#25D366',   // Send button, online dot
+  primarySend:    '#00897B',   // Send button background
+
+  // Chat backgrounds
+  bgApp:          '#ECE5DD',   // Main chat background
+  bgSent:         '#DCF8C6',   // Sent message bubble
+  bgReceived:     '#FFFFFF',   // Received message bubble
+  bgInput:        '#F0F0F0',   // Input area background
+  bgTextInput:    '#FFFFFF',   // Text field background
+
+  // Text
+  textPrimary:    '#000000',
+  textSecondary:  '#667781',
+  textMuted:      '#888888',
+  textWhite:      '#FFFFFF',
+  textDanger:     '#DC2626',
+  textDangerAlt:  '#e53935',
+
+  // UI chrome
+  divider:        '#E1E1E1',
+  dividerLight:   '#f0f0f0',
+  dividerHeavy:   '#E5E5E5',
+  disabled:       '#BDBDBD',
+  subtitleGreen:  '#B8E6B8',
+
+  // Recording
+  recordBg:       '#FFF5F5',
+  recordBorder:   '#FFCCCC',
+  recordDot:      '#e53935',
+
+  // Media / dark overlays
+  mediaDark:      '#1a1a1a',
+  mediaError:     '#2a2a2a',
+  overlayDark:    'rgba(0,0,0,0.95)',
+  overlayMid:     'rgba(0,0,0,0.55)',
+  overlayLight:   'rgba(0,0,0,0.3)',
+  overlayTint:    'rgba(0,0,0,0.15)',
+  overlayModal:   'rgba(0,0,0,0.5)',
+  overlayModalAlt:'rgba(0,0,0,0.4)',
+};
+
 const styles = StyleSheet.create({
-  // Screen
+
+  // ── Screen containers ───────────────────────────────────────────────────────
+  // Note: fullContainer's backgroundColor (#075E54) intentionally "bleeds"
+  // into the status bar area on Android during screen transitions.
+  // screenContainer covers the rest with the chat wallpaper color.
   fullContainer: {
     flex: 1,
-    backgroundColor: '#075E54',
+    backgroundColor: COLORS.primaryDark,
   },
 
   screenContainer: {
     flex: 1,
-    backgroundColor: '#ECE5DD',
+    backgroundColor: COLORS.bgApp,
   },
 
   statusBarSpacer: {
-    backgroundColor: '#075E54',
+    backgroundColor: COLORS.primaryDark,
   },
 
   chatContainer: {
     flex: 1,
-    backgroundColor: '#ECE5DD',
+    backgroundColor: COLORS.bgApp,
     paddingHorizontal: 6,
   },
 
@@ -30,7 +82,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#ECE5DD',
+    backgroundColor: COLORS.bgApp,
   },
 
   loadingText: {
@@ -40,15 +92,15 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 
-  // Header
+  // ── Header ──────────────────────────────────────────────────────────────────
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#075E54',
+    backgroundColor: COLORS.primaryDark,
     paddingHorizontal: 12,
     paddingVertical: 12,
     elevation: 4,
-    shadowColor: '#000',
+    shadowColor: COLORS.textPrimary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
@@ -74,18 +126,18 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#25D366',
+    backgroundColor: COLORS.primaryLight,
     justifyContent: 'center',
     alignItems: 'center',
   },
 
   onlineAvatar: {
     borderWidth: 2,
-    borderColor: '#25D366',
+    borderColor: COLORS.primaryLight,
   },
 
   headerAvatarText: {
-    color: '#FFFFFF',
+    color: COLORS.textWhite,
     fontSize: 16,
     fontWeight: 'bold',
   },
@@ -96,10 +148,10 @@ const styles = StyleSheet.create({
     right: 2,
     width: 12,
     height: 12,
-    borderRadius: 6,
-    backgroundColor: '#25D366',
+    borderRadius: 6,          // 12 / 2 = 6 ✅ exact circle
+    backgroundColor: COLORS.primaryLight,
     borderWidth: 2,
-    borderColor: '#075E54',
+    borderColor: COLORS.primaryDark,
   },
 
   headerTextContainer: {
@@ -107,13 +159,13 @@ const styles = StyleSheet.create({
   },
 
   headerTitle: {
-    color: '#FFFFFF',
+    color: COLORS.textWhite,
     fontSize: 18,
     fontWeight: 'bold',
   },
 
   headerSubtitle: {
-    color: '#B8E6B8',
+    color: COLORS.subtitleGreen,
     fontSize: 13,
     marginTop: 2,
   },
@@ -128,12 +180,12 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
 
-  // Alternate header styles kept for compatibility
+  // Alternate header styles kept for compatibility with legacy screens
   avatarContainer: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#25D366',
+    backgroundColor: COLORS.primaryLight,
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
@@ -141,7 +193,7 @@ const styles = StyleSheet.create({
   },
 
   avatarText: {
-    color: '#FFFFFF',
+    color: COLORS.textWhite,
     fontSize: 16,
     fontWeight: 'bold',
   },
@@ -152,10 +204,10 @@ const styles = StyleSheet.create({
     right: 1,
     width: 11,
     height: 11,
-    borderRadius: 6,
-    backgroundColor: '#25D366',
+    borderRadius: 5.5,        // ✅ Fixed: 11 / 2 = 5.5 for a true circle (was 6)
+    backgroundColor: COLORS.primaryLight,
     borderWidth: 2,
-    borderColor: '#075E54',
+    borderColor: COLORS.primaryDark,
   },
 
   headerInfo: {
@@ -163,13 +215,13 @@ const styles = StyleSheet.create({
   },
 
   headerName: {
-    color: '#FFFFFF',
+    color: COLORS.textWhite,
     fontSize: 17,
     fontWeight: 'bold',
   },
 
   headerStatus: {
-    color: '#B8E6B8',
+    color: COLORS.subtitleGreen,
     fontSize: 12,
     marginTop: 1,
   },
@@ -178,7 +230,7 @@ const styles = StyleSheet.create({
     padding: 8,
   },
 
-  // Messages
+  // ── Messages ────────────────────────────────────────────────────────────────
   messagesLoadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -216,7 +268,7 @@ const styles = StyleSheet.create({
 
   loadingOlderText: {
     fontSize: 12,
-    color: '#888',
+    color: COLORS.textMuted,
   },
 
   emptyMessagesContainer: {
@@ -229,14 +281,14 @@ const styles = StyleSheet.create({
   emptyMessagesText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#075E54',
+    color: COLORS.primaryDark,
     marginTop: 16,
     textAlign: 'center',
   },
 
   emptyMessagesSubtext: {
     fontSize: 14,
-    color: '#667781',
+    color: COLORS.textSecondary,
     marginTop: 8,
     textAlign: 'center',
     lineHeight: 20,
@@ -258,12 +310,12 @@ const styles = StyleSheet.create({
 
   emptySubText: {
     fontSize: 13,
-    color: '#999',
+    color: COLORS.textMuted,
     textAlign: 'center',
     paddingHorizontal: 40,
   },
 
-  // Date separator
+  // ── Date separator ──────────────────────────────────────────────────────────
   dateSeparatorContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -285,7 +337,7 @@ const styles = StyleSheet.create({
 
   dateSeparatorText: {
     fontSize: 11,
-    color: '#667781',
+    color: COLORS.textSecondary,
     backgroundColor: '#D9D9D9',
     paddingHorizontal: 10,
     paddingVertical: 3,
@@ -294,7 +346,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // Message bubble
+  // ── Message bubbles ─────────────────────────────────────────────────────────
   messageContainer: {
     marginVertical: 4,
     paddingHorizontal: 12,
@@ -305,13 +357,13 @@ const styles = StyleSheet.create({
 
   currentUserMessageContainer: {
     alignSelf: 'flex-end',
-    backgroundColor: '#DCF8C6',
+    backgroundColor: COLORS.bgSent,
     borderTopRightRadius: 0,
   },
 
   otherUserMessageContainer: {
     alignSelf: 'flex-start',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.bgReceived,
     borderTopLeftRadius: 0,
   },
 
@@ -329,12 +381,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     marginBottom: 3,
-    color: '#075E54',
+    color: COLORS.primaryDark,
   },
 
   messageText: {
     fontSize: 16,
-    color: '#000',
+    color: COLORS.textPrimary,
     lineHeight: 21,
     marginBottom: 2,
   },
@@ -352,7 +404,7 @@ const styles = StyleSheet.create({
 
   messageTime: {
     fontSize: 11,
-    color: '#667781',
+    color: COLORS.textSecondary,
     marginRight: 4,
   },
 
@@ -375,7 +427,7 @@ const styles = StyleSheet.create({
     borderRightWidth: 10,
     borderBottomWidth: 0,
     borderLeftWidth: 0,
-    borderTopColor: '#DCF8C6',
+    borderTopColor: COLORS.bgSent,
     borderRightColor: 'transparent',
     borderBottomColor: 'transparent',
     borderLeftColor: 'transparent',
@@ -387,21 +439,24 @@ const styles = StyleSheet.create({
     borderRightWidth: 0,
     borderBottomWidth: 0,
     borderLeftWidth: 10,
-    borderTopColor: '#FFFFFF',
+    borderTopColor: COLORS.bgReceived,
     borderRightColor: 'transparent',
     borderBottomColor: 'transparent',
     borderLeftColor: 'transparent',
   },
 
-  // Input / keyboard-safe wrappers
+  // ── Input area ──────────────────────────────────────────────────────────────
+  // Note: `inputWrapper` and `inputContainer` serve different layout contexts
+  // (inputWrapper is used inside bottomInputWrapper with a border;
+  //  inputContainer is used standalone). Both are kept for compatibility.
   bottomInputWrapper: {
-    backgroundColor: '#ECE5DD',
+    backgroundColor: COLORS.bgApp,
   },
 
   inputWrapper: {
-    backgroundColor: '#F0F0F0',
+    backgroundColor: COLORS.bgInput,
     borderTopWidth: 1,
-    borderTopColor: '#E1E1E1',
+    borderTopColor: COLORS.divider,
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: 8,
@@ -417,7 +472,7 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     paddingBottom: 6,
     minHeight: 56,
-    backgroundColor: '#F0F0F0',
+    backgroundColor: COLORS.bgInput,
   },
 
   emojiToggleButton: {
@@ -436,7 +491,7 @@ const styles = StyleSheet.create({
 
   textInput: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.bgTextInput,
     borderRadius: 21,
     paddingHorizontal: 15,
     paddingVertical: Platform.OS === 'ios' ? 10 : 8,
@@ -446,11 +501,11 @@ const styles = StyleSheet.create({
     textAlignVertical: 'center',
     minHeight: 42,
     borderWidth: 1,
-    borderColor: '#E1E1E1',
+    borderColor: COLORS.divider,
   },
 
   sendButton: {
-    backgroundColor: '#00897B',
+    backgroundColor: COLORS.primarySend,
     borderRadius: 24,
     width: 48,
     height: 48,
@@ -460,14 +515,14 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
     marginBottom: 4,
     elevation: 3,
-    shadowColor: '#000',
+    shadowColor: COLORS.textPrimary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 3,
   },
 
   sendButtonDisabled: {
-    backgroundColor: '#BDBDBD',
+    backgroundColor: COLORS.disabled,
     elevation: 0,
   },
 
@@ -481,19 +536,19 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
 
-  // Emoji picker
+  // ── Emoji picker ─────────────────────────────────────────────────────────────
   emojiContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.bgTextInput,
     paddingVertical: 10,
     paddingHorizontal: 8,
     borderTopWidth: 1,
-    borderTopColor: '#E1E1E1',
+    borderTopColor: COLORS.divider,
   },
 
   emojiPicker: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.bgTextInput,
     borderTopWidth: 1,
-    borderTopColor: '#E1E1E1',
+    borderTopColor: COLORS.divider,
     maxHeight: 280,
   },
 
@@ -511,11 +566,11 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 16,
     marginHorizontal: 4,
-    backgroundColor: '#F0F0F0',
+    backgroundColor: COLORS.bgInput,
   },
 
   emojiCategoryTabActive: {
-    backgroundColor: '#075E54',
+    backgroundColor: COLORS.primaryDark,
   },
 
   emojiCategoryLabel: {
@@ -540,13 +595,13 @@ const styles = StyleSheet.create({
     fontSize: 26,
   },
 
-  // Audio recording
+  // ── Audio recording ─────────────────────────────────────────────────────────
   recordingContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.bgTextInput,
     borderTopWidth: 1,
-    borderTopColor: '#E1E1E1',
+    borderTopColor: COLORS.divider,
     paddingHorizontal: 8,
     paddingVertical: 8,
     minHeight: 56,
@@ -562,13 +617,13 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF5F5',
+    backgroundColor: COLORS.recordBg,
     borderRadius: 21,
     paddingHorizontal: 14,
     paddingVertical: 10,
     minHeight: 42,
     borderWidth: 1,
-    borderColor: '#FFCCCC',
+    borderColor: COLORS.recordBorder,
     marginHorizontal: 4,
   },
 
@@ -576,12 +631,12 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#e53935',
+    backgroundColor: COLORS.recordDot,
     marginRight: 8,
   },
 
   recordingText: {
-    color: '#e53935',
+    color: COLORS.recordDot,
     fontWeight: '600',
     fontSize: 14,
   },
@@ -594,7 +649,7 @@ const styles = StyleSheet.create({
   },
 
   recordingSendBtn: {
-    backgroundColor: '#25D366',
+    backgroundColor: COLORS.primaryLight,
     borderRadius: 24,
     width: 48,
     height: 48,
@@ -604,18 +659,18 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
     marginBottom: 4,
     elevation: 3,
-    shadowColor: '#000',
+    shadowColor: COLORS.textPrimary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 3,
   },
 
-  // Attachment / file / media
+  // ── Attachment / file / media ────────────────────────────────────────────────
   imageWrapper: {
     borderRadius: 10,
     overflow: 'hidden',
     maxWidth: 240,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: COLORS.mediaDark,
   },
 
   uploadOverlay: {
@@ -624,7 +679,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: COLORS.overlayMid,
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 10,
@@ -632,14 +687,14 @@ const styles = StyleSheet.create({
   },
 
   uploadText: {
-    color: '#fff',
+    color: COLORS.textWhite,
     fontSize: 13,
     fontWeight: '700',
     marginTop: 6,
   },
 
   uploadProgressText: {
-    color: '#fff',
+    color: COLORS.textWhite,
     fontSize: 16,
     fontWeight: 'bold',
   },
@@ -654,7 +709,7 @@ const styles = StyleSheet.create({
 
   progressFill: {
     height: 4,
-    backgroundColor: '#25D366',
+    backgroundColor: COLORS.primaryLight,
     borderRadius: 2,
   },
 
@@ -675,7 +730,7 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    backgroundColor: COLORS.overlayLight,
   },
 
   chatImage: {
@@ -695,18 +750,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingBottom: 4,
     paddingTop: 2,
-    backgroundColor: 'rgba(0,0,0,0.15)',
+    backgroundColor: COLORS.overlayTint,
   },
 
   imageTime: {
-    color: '#fff',
+    color: COLORS.textWhite,
     fontSize: 11,
   },
 
   fileContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#128C7E',
+    backgroundColor: COLORS.primaryMid,
     borderRadius: 8,
     padding: 10,
     maxWidth: 220,
@@ -714,7 +769,7 @@ const styles = StyleSheet.create({
   },
 
   fileName: {
-    color: '#fff',
+    color: COLORS.textWhite,
     fontSize: 14,
     fontWeight: '500',
     flex: 1,
@@ -742,12 +797,12 @@ const styles = StyleSheet.create({
     height: 160,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#2a2a2a',
+    backgroundColor: COLORS.mediaError,
     borderRadius: 10,
   },
 
   fileErrorText: {
-    color: '#999',
+    color: COLORS.textMuted,
     fontSize: 13,
     marginTop: 6,
   },
@@ -756,86 +811,102 @@ const styles = StyleSheet.create({
     width: 220,
     height: 220,
     borderRadius: 12,
-    backgroundColor: '#2a2a2a',
+    backgroundColor: COLORS.mediaError,
     justifyContent: 'center',
     alignItems: 'center',
   },
 
   imageErrorText: {
-    color: '#999',
+    color: COLORS.textMuted,
     fontSize: 12,
     marginTop: 6,
   },
 
   retryButton: {
     marginTop: 8,
-    backgroundColor: '#075E54',
+    backgroundColor: COLORS.primaryDark,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
   },
 
   retryText: {
-    color: '#fff',
+    color: COLORS.textWhite,
     fontSize: 12,
     fontWeight: '600',
   },
 
-videoContainer: {
-  width: 220,
-  height: 220,
-  borderRadius: 10,
-  overflow: 'hidden',
-  backgroundColor: '#000',
-  justifyContent: 'center',  // Add this
-  alignItems: 'center',      // Add this
-  position: 'relative',      // Add this
-},
-videoPlayButton: {
-  position: 'absolute',
-  top: '50%',
-  left: '50%',
-  transform: [
-    { translateX: -25 },  // Half of button width (adjust based on your icon size)
-    { translateY: -25 },  // Half of button height
-  ],
-  backgroundColor: 'rgba(0,0,0,0.6)',
-  borderRadius: 30,
-  width: 50,
-  height: 50,
-  justifyContent: 'center',
-  alignItems: 'center',
-  zIndex: 10,
-},
+  // ── Video ────────────────────────────────────────────────────────────────────
+  videoContainer: {
+    width: 220,
+    height: 220,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    // ✅ Center children so videoPlayButton can use default flow positioning
+    //    instead of fragile absolute top/left percentage calculations.
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+
+  // ✅ Fixed: removed `top: '50%'` + `left: '50%'` + transform offset pattern.
+  //    The parent (videoContainer) centers its children via justifyContent /
+  //    alignItems, so absolute positioning with inset: 0 + auto margin is more
+  //    robust and doesn't break if the container size changes.
+  videoPlayButton: {
+    position: 'absolute',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 30,
+    width: 50,
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+    // No manual top/left — parent's justifyContent/alignItems centers this
+  },
+
   video: {
     width: '100%',
     height: '100%',
   },
 
+  videoLoader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 5,
+  },
+
+  // ── Audio ────────────────────────────────────────────────────────────────────
   audioContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#075E54',
+    backgroundColor: COLORS.primaryDark,
     padding: 10,
     borderRadius: 10,
   },
 
   audioText: {
-    color: '#fff',
+    color: COLORS.textWhite,
     marginLeft: 10,
   },
 
-  // Image / video viewer
+  // ── Image / video viewer (fullscreen) ────────────────────────────────────────
   fullScreenContainer: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.95)',
+    backgroundColor: COLORS.overlayDark,
     justifyContent: 'center',
     alignItems: 'center',
   },
 
   imageViewerOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.95)',
+    backgroundColor: COLORS.overlayDark,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -865,9 +936,13 @@ videoPlayButton: {
     height: '80%',
   },
 
+  // ✅ Fixed: removed duplicate definition. Keeping the more complete version
+  //    (height: '100%' + backgroundColor) as that is the intended fullscreen
+  //    video player style. The earlier height: '80%' version is discarded.
   fullScreenVideo: {
     width: '100%',
-    height: '80%',
+    height: '100%',
+    backgroundColor: '#000',
   },
 
   videoPlayerContainer: {
@@ -881,10 +956,12 @@ videoPlayButton: {
     fontSize: 13,
   },
 
-  // Options modal
+  // ── Options modal ─────────────────────────────────────────────────────────────
+  // Note: optionsModalOverlay / optionsMenuContainer are the primary (new) styles.
+  //       modalOverlay / optionsMenu / optionItem etc. are kept for legacy screens.
   optionsModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: COLORS.overlayModal,
     justifyContent: 'flex-start',
     alignItems: 'flex-end',
     paddingTop: Platform.OS === 'ios' ? 100 : 80,
@@ -892,11 +969,11 @@ videoPlayButton: {
   },
 
   optionsMenuContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.bgTextInput,
     borderRadius: 8,
     minWidth: 180,
     elevation: 8,
-    shadowColor: '#000',
+    shadowColor: COLORS.textPrimary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -909,7 +986,7 @@ videoPlayButton: {
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5E5',
+    borderBottomColor: COLORS.dividerHeavy,
   },
 
   optionsMenuIcon: {
@@ -923,13 +1000,13 @@ videoPlayButton: {
   },
 
   deleteMenuText: {
-    color: '#DC2626',
+    color: COLORS.textDanger,
   },
 
-  // Alternate modal styles kept for compatibility
+  // Legacy modal styles — kept for compatibility with older screens
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: COLORS.overlayModalAlt,
     justifyContent: 'flex-start',
     alignItems: 'flex-end',
     paddingTop: Platform.OS === 'ios' ? 100 : 70,
@@ -937,12 +1014,12 @@ videoPlayButton: {
   },
 
   optionsMenu: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.bgTextInput,
     borderRadius: 10,
     paddingVertical: 6,
     minWidth: 170,
     elevation: 8,
-    shadowColor: '#000',
+    shadowColor: COLORS.textPrimary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
@@ -966,21 +1043,21 @@ videoPlayButton: {
   },
 
   optionDestructive: {
-    color: '#e53935',
+    color: COLORS.textDangerAlt,
   },
 
   optionDivider: {
     height: 1,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: COLORS.dividerLight,
     marginHorizontal: 10,
   },
 
-  // New message badge
+  // ── New message badge ─────────────────────────────────────────────────────────
   newMessageBadge: {
     position: 'absolute',
     top: 10,
     alignSelf: 'center',
-    backgroundColor: '#075E54',
+    backgroundColor: COLORS.primaryDark,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
@@ -991,32 +1068,14 @@ videoPlayButton: {
     gap: 4,
   },
 
+  // ✅ Fixed: removed duplicate `newMessageText` (was identical to this).
+  //    Consolidate all badge label usage to `newMessageBadgeText`.
   newMessageBadgeText: {
-    color: '#fff',
+    color: COLORS.textWhite,
     fontSize: 13,
     fontWeight: '600',
   },
 
-  newMessageText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  fullScreenVideo: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#000',
-  },
-  videoLoader: {
-  position: 'absolute',
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  justifyContent: 'center',
-  alignItems: 'center',
-  zIndex: 5,
-},
 });
 
 export default styles;

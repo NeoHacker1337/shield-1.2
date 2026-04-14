@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  memo,
+} from 'react';
 import {
   View,
   Text,
@@ -13,8 +19,9 @@ import {
   Image,
   PermissionsAndroid,
   StatusBar,
+  PanResponder,
+  Animated,
 } from 'react-native';
-
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -39,6 +46,9 @@ import useSendMessage from '../chatSystem/Features/useSendMessage';
 import useChatActions from '../chatSystem/Features/useChatActions';
 import useEmojiPicker from '../chatSystem/Features/useEmojiPicker';
 import useImageViewer from '../chatSystem/Features/useImageViewer';
+import useEditMessage from '../chatSystem/Features/useEditMessage';
+import useReplyMessage from '../chatSystem/Features/useReplyMessage';
+import ReplyBanner from '../chatSystem/ReplyBanner';
 
 import {
   getDisplayNameFromChatRoom,
@@ -51,6 +61,128 @@ import {
   isOwnMessage,
   isGuestMessage,
 } from '../chatSystem/Features/ChatHelpers';
+
+const SWIPE_THRESHOLD = 60;
+const MAX_SWIPE_DISTANCE = 80;
+
+const SwipeableMessageRow = memo(
+  ({
+    item,
+    prevItem,
+    currentUser,
+    startReply,
+    handleMessageLongPress,
+    startEdit,
+    isImageLoading,
+    isImageError,
+    isDownloading,
+    getDownloadProgress,
+    openImage,
+    openVideo,
+    openFile,
+    downloadFile,
+    onImageLoadStart,
+    onImageLoadEnd,
+    onImageError,
+  }) => {
+    const translateX = useRef(new Animated.Value(0)).current;
+
+    const ownMessage = isOwnMessage(item, currentUser);
+    const guestMsg = isGuestMessage(item);
+    const showDate = shouldShowDateSeparator(item, prevItem);
+    const messageTime = formatMessageTime(item.created_at);
+
+    const resetPosition = useCallback(() => {
+      Animated.spring(translateX, {
+        toValue: 0,
+        useNativeDriver: true,
+        speed: 20,
+        bounciness: 6,
+      }).start();
+    }, [translateX]);
+
+    const panResponder = useRef(
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) =>
+          g.dx > 8 && Math.abs(g.dy) < 20,
+
+        onPanResponderMove: (_, g) => {
+          if (g.dx > 0) {
+            translateX.setValue(Math.min(g.dx, MAX_SWIPE_DISTANCE));
+          }
+        },
+
+        onPanResponderRelease: (_, g) => {
+          if (g.dx >= SWIPE_THRESHOLD) {
+            startReply(item);
+          }
+          resetPosition();
+        },
+
+        onPanResponderTerminate: resetPosition,
+      })
+    ).current;
+
+    const replyIconOpacity = translateX.interpolate({
+      inputRange: [0, SWIPE_THRESHOLD],
+      outputRange: [0, 1],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <>
+        {showDate && (
+          <View style={styles.dateSeparator}>
+            <Text style={styles.dateSeparatorText}>
+              {formatMessageDateLabel(item.created_at)}
+            </Text>
+          </View>
+        )}
+
+        <View style={{ position: 'relative' }}>
+          <Animated.View
+            style={{
+              position: 'absolute',
+              left: 8,
+              top: '50%',
+              opacity: replyIconOpacity,
+              zIndex: 0,
+              marginTop: -10,
+            }}
+          >
+            <Icon name="reply" size={20} color="#075E54" />
+          </Animated.View>
+
+          <Animated.View
+            style={{ transform: [{ translateX }] }}
+            {...panResponder.panHandlers}
+          >
+            <MessageItem
+              item={item}
+              ownMessage={ownMessage}
+              guestMsg={guestMsg}
+              messageTime={messageTime}
+              isImageLoading={isImageLoading(item.id)}
+              isImageError={isImageError(item.id)}
+              isDownloading={isDownloading(item.id)}
+              downloadProgress={getDownloadProgress(item.id)}
+              onLongPress={() => handleMessageLongPress(item, startEdit)}
+              onImagePress={() => openImage(item.file_url)}
+              onVideoPress={() => openVideo(item.file_url)}
+              onFilePress={() => openFile(item.file_url, item.file_name)}
+              onDownloadPress={() =>
+                downloadFile(item.file_url, item.file_name, item.id)
+              }
+              onImageLoadStart={() => onImageLoadStart(item.id)}
+              onImageLoadEnd={() => onImageLoadEnd(item.id)}
+              onImageError={() => onImageError(item.id)}
+            />
+          </Animated.View>
+        </View>
+      </>
+    );
+  }
+);
 
 const ChatScreen = ({ route, navigation }) => {
   const insets = useSafeAreaInsets();
@@ -67,30 +199,31 @@ const ChatScreen = ({ route, navigation }) => {
 
   const flatListRef = useRef(null);
   const inputRef = useRef(null);
+  const isRecordingRef = useRef(false);
+  const mountedRef = useRef(true);
 
-  // ✅ Use your keyboard hook
-  const { keyboardHeight, isKeyboardVisible } = useKeyboard();
+  const { isKeyboardVisible } = useKeyboard();
 
-  // ════════════════════════════════════════════════════════════
-  // INITIALIZE USER
-  // ════════════════════════════════════════════════════════════
   useEffect(() => {
-    const initializeUser = async () => {
-      try {
-        if (!currentUser) {
-          const user = await authService.getCurrentUser();
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (currentUser) return;
+
+    authService
+      .getCurrentUser()
+      .then(user => {
+        if (user && mountedRef.current) {
           setCurrentUser(user);
         }
-      } catch (error) {
-        handleApiError(error, 'Failed to get current user');
-      }
-    };
-    initializeUser();
+      })
+      .catch(err => handleApiError(err, 'Failed to get current user'));
   }, [currentUser]);
 
-  // ════════════════════════════════════════════════════════════
-  // ALL HOOKS
-  // ════════════════════════════════════════════════════════════
   const { localContactName } = useContactName({ chatRoom, currentUser });
 
   const {
@@ -104,7 +237,6 @@ const ChatScreen = ({ route, navigation }) => {
     setShowNewMessageBadge,
     lastMessageIdRef,
     pollingIntervalRef,
-    loadMessages,
     checkForNewMessages,
     loadOlderMessages,
     handleScroll,
@@ -117,6 +249,22 @@ const ChatScreen = ({ route, navigation }) => {
     handleSend,
     handleSendFile,
   } = useSendMessage({ chatRoom, currentUser, setMessages, lastMessageIdRef });
+
+  const {
+    editingMessage,
+    editText,
+    setEditText,
+    isEditing,
+    startEdit,
+    handleEdit,
+    cancelEdit,
+  } = useEditMessage({ chatRoom, currentUser, setMessages });
+
+  const {
+    replyingTo,
+    startReply,
+    cancelReply,
+  } = useReplyMessage();
 
   const {
     handleMessageLongPress,
@@ -172,77 +320,18 @@ const ChatScreen = ({ route, navigation }) => {
     onAttach: async (type, payload) => {
       try {
         if (!chatRoom?.id) return;
-        handleSendFile(payload, type);
+        handleSendFile(payload, type, replyingTo, cancelReply);
       } catch (error) {
         console.log('Attachment send error:', error);
       }
     },
   });
 
-  // ════════════════════════════════════════════════════════════
-  // AUDIO RECORDING STATE
-  // ════════════════════════════════════════════════════════════
   const [isRecording, setIsRecording] = useState(false);
   const [recordTime, setRecordTime] = useState('00:00');
-  const [recordedFilePath, setRecordedFilePath] = useState(null);
   const recordTimerRef = useRef(null);
   const recordSecondsRef = useRef(0);
 
-  // ════════════════════════════════════════════════════════════
-  // EFFECTS
-  // ════════════════════════════════════════════════════════════
-  useEffect(() => {
-    if (chatRoom?.id && !loading) {
-      pollingIntervalRef.current = setInterval(checkForNewMessages, 3000);
-    }
-    return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-      }
-    };
-  }, [chatRoom?.id, loading, checkForNewMessages]);
-
-  useEffect(() => {
-    if (isAtBottom && messages.length > 0) {
-      setTimeout(() => scrollToBottom(), 100);
-    }
-  }, [messages.length, isAtBottom]);
-
-  useEffect(() => {
-    if (chatRoom?.id) {
-      loadMessages(1, false);
-    }
-  }, [chatRoom?.id]);
-
-  useEffect(() => {
-    return () => {
-      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (isRecording) {
-        Sound.stopRecorder().catch(() => { });
-        Sound.removeRecordBackListener();
-      }
-      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
-    };
-  }, [isRecording]);
-
-  // ✅ Auto scroll on keyboard open
-  useEffect(() => {
-    if (isKeyboardVisible) {
-      setTimeout(() => {
-        scrollToBottom(false);
-      }, 100);
-    }
-  }, [isKeyboardVisible, scrollToBottom]);
-
-  // ════════════════════════════════════════════════════════════
-  // SCROLL
-  // ════════════════════════════════════════════════════════════
   const scrollToBottom = useCallback((animated = true) => {
     requestAnimationFrame(() => {
       flatListRef.current?.scrollToOffset({
@@ -252,9 +341,72 @@ const ChatScreen = ({ route, navigation }) => {
     });
   }, []);
 
-  // ════════════════════════════════════════════════════════════
-  // AUDIO HELPERS
-  // ════════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!chatRoom?.id || loading) return;
+
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+
+    pollingIntervalRef.current = setInterval(() => {
+      checkForNewMessages();
+    }, 3000);
+
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
+  }, [chatRoom?.id, loading, checkForNewMessages, pollingIntervalRef]);
+
+  useEffect(() => {
+    if (isAtBottom && messages.length > 0) {
+      const timer = setTimeout(() => {
+        if (mountedRef.current) {
+          scrollToBottom();
+        }
+      }, 100);
+
+      return () => clearTimeout(timer);
+    }
+  }, [messages.length, isAtBottom, scrollToBottom]);
+
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  useEffect(() => {
+    return () => {
+      if (isRecordingRef.current) {
+        Sound.stopRecorder().catch(() => { });
+        Sound.removeRecordBackListener();
+      }
+
+      if (recordTimerRef.current) {
+        clearInterval(recordTimerRef.current);
+      }
+
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
+  }, [pollingIntervalRef]);
+
+  useEffect(() => {
+    if (isKeyboardVisible) {
+      const timer = setTimeout(() => {
+        if (mountedRef.current) {
+          scrollToBottom(false);
+        }
+      }, 100);
+
+      return () => clearTimeout(timer);
+    }
+  }, [isKeyboardVisible, scrollToBottom]);
+
   const requestPermission = async () => {
     if (Platform.OS === 'android') {
       const granted = await PermissionsAndroid.request(
@@ -264,22 +416,29 @@ const ChatScreen = ({ route, navigation }) => {
           message: 'App needs microphone access to record audio messages.',
           buttonPositive: 'Allow',
           buttonNegative: 'Deny',
-        },
+        }
       );
       return granted === PermissionsAndroid.RESULTS.GRANTED;
     }
     return true;
   };
 
-  const formatRecordTime = (seconds) => {
-    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+  const formatRecordTime = seconds => {
+    const m = Math.floor(seconds / 60)
+      .toString()
+      .padStart(2, '0');
     const s = (seconds % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
   };
 
   const startRecordTimer = () => {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+    }
+
     recordSecondsRef.current = 0;
     setRecordTime('00:00');
+
     recordTimerRef.current = setInterval(() => {
       recordSecondsRef.current += 1;
       setRecordTime(formatRecordTime(recordSecondsRef.current));
@@ -298,6 +457,7 @@ const ChatScreen = ({ route, navigation }) => {
   const onStartRecord = async () => {
     const hasPermission = await requestPermission();
     if (!hasPermission) return;
+
     try {
       const audioSet = {
         AudioEncoderAndroid: AudioEncoderAndroidType.AAC,
@@ -311,12 +471,15 @@ const ChatScreen = ({ route, navigation }) => {
           AVFormatIDKeyIOS: 'aac',
         }),
       };
-      const filePath = await Sound.startRecorder(undefined, audioSet, true);
-      setRecordedFilePath(filePath);
+
+      await Sound.startRecorder(undefined, audioSet, true);
       setIsRecording(true);
       startRecordTimer();
+      closeEmojiPicker();
     } catch (error) {
       console.error('Start record error:', error);
+      setIsRecording(false);
+      stopRecordTimer();
     }
   };
 
@@ -324,10 +487,12 @@ const ChatScreen = ({ route, navigation }) => {
     try {
       const filePath = await Sound.stopRecorder();
       Sound.removeRecordBackListener();
+
       const durationSeconds = recordSecondsRef.current;
+
       stopRecordTimer();
       setIsRecording(false);
-      setRecordedFilePath(null);
+
       if (filePath && chatRoom?.id) {
         const payload = {
           uri: filePath,
@@ -335,7 +500,8 @@ const ChatScreen = ({ route, navigation }) => {
           type: 'audio/aac',
           duration: durationSeconds,
         };
-        handleSendFile(payload, 'audio');
+
+        handleSendFile(payload, 'audio', replyingTo, cancelReply);
       }
     } catch (error) {
       console.error('Stop record error:', error);
@@ -353,15 +519,19 @@ const ChatScreen = ({ route, navigation }) => {
     } finally {
       stopRecordTimer();
       setIsRecording(false);
-      setRecordedFilePath(null);
     }
   };
 
-  // ════════════════════════════════════════════════════════════
-  // RENDER HELPERS
-  // ════════════════════════════════════════════════════════════
+  const handleOptionPress = useCallback(action => {
+    setShowOptionsMenu(false);
+    requestAnimationFrame(() => {
+      action?.();
+    });
+  }, []);
+
   const renderLoadingHeader = () => {
     if (!loadingOlderMessages || !hasMoreMessages) return null;
+
     return (
       <View style={styles.loadingHeaderContainer}>
         <ActivityIndicator size="small" color="#888" />
@@ -370,51 +540,54 @@ const ChatScreen = ({ route, navigation }) => {
     );
   };
 
-  const renderMessageItem = ({ item, index }) => {
-    if (!item || !item.id) return null;
-    const prevItem = messages[messages.length - 1 - (index + 1)] || null;
-    const showDate = shouldShowDateSeparator(item, prevItem);
-    const messageTime = formatMessageTime(item.created_at);
-    const ownMessage = isOwnMessage(item, currentUser);
-    const guestMsg = isGuestMessage(item);
+  const renderMessageItem = useCallback(
+    ({ item, index }) => {
+      if (!item || !item.id) return null;
 
-    return (
-      <>
-        {showDate && (
-          <View style={styles.dateSeparatorWrapper}>
-            <Text style={styles.dateSeparatorText}>
-              {formatMessageDateLabel(item.created_at)}
-            </Text>
-          </View>
-        )}
-        <MessageItem
+      const prevItem = messages[messages.length - 1 - (index + 1)] || null;
+
+      return (
+        <SwipeableMessageRow
           item={item}
+          prevItem={prevItem}
           currentUser={currentUser}
-          messageTime={messageTime}
-          ownMessage={ownMessage}
-          guestMsg={guestMsg}
-          isImageLoading={isImageLoading(item.id)}
-          isImageError={isImageError(item.id)}
-          isDownloading={isDownloading(item.id)}
-          downloadProgress={getDownloadProgress(item.id)}
-          onLongPress={() => handleMessageLongPress(item)}
-          onImagePress={() => openImage(item.file_url)}
-          onVideoPress={() => openVideo(item.file_url)}
-          onFilePress={() => openFile(item.file_url, item.file_name)}
-          onDownloadPress={() =>
-            downloadFile(item.file_url, item.file_name, item.id)
-          }
-          onImageLoadStart={() => onImageLoadStart(item.id)}
-          onImageLoadEnd={() => onImageLoadEnd(item.id)}
-          onImageError={() => onImageError(item.id)}
+          startReply={startReply}
+          handleMessageLongPress={handleMessageLongPress}
+          startEdit={startEdit}
+          isImageLoading={isImageLoading}
+          isImageError={isImageError}
+          isDownloading={isDownloading}
+          getDownloadProgress={getDownloadProgress}
+          openImage={openImage}
+          openVideo={openVideo}
+          openFile={openFile}
+          downloadFile={downloadFile}
+          onImageLoadStart={onImageLoadStart}
+          onImageLoadEnd={onImageLoadEnd}
+          onImageError={onImageError}
         />
-      </>
-    );
-  };
+      );
+    },
+    [
+      messages,
+      currentUser,
+      startReply,
+      handleMessageLongPress,
+      startEdit,
+      isImageLoading,
+      isImageError,
+      isDownloading,
+      getDownloadProgress,
+      openImage,
+      openVideo,
+      openFile,
+      downloadFile,
+      onImageLoadStart,
+      onImageLoadEnd,
+      onImageError,
+    ]
+  );
 
-  // ════════════════════════════════════════════════════════════
-  // EARLY RETURN
-  // ════════════════════════════════════════════════════════════
   if (loading && !chatRoom) {
     return (
       <View style={styles.loadingContainer}>
@@ -427,24 +600,22 @@ const ChatScreen = ({ route, navigation }) => {
   const baseDisplayName = getDisplayNameFromChatRoom(
     chatRoom,
     contactName,
-    currentUser,
+    currentUser
   );
   const displayName = localContactName || baseDisplayName;
   const avatarChar = getContactAvatar(displayName);
   const avatarColor = getAvatarColor(displayName);
   const isOnline = getOnlineStatus();
 
-  // ════════════════════════════════════════════════════════════
-  // RENDER EMOJI PICKER
-  // ════════════════════════════════════════════════════════════
   const renderEmojiPicker = () => {
     if (!showEmojiPicker) return null;
+
     return (
       <View style={styles.emojiPickerContainer}>
         <FlatList
           data={categoryTabs}
           horizontal
-          keyExtractor={(item) => item.key}
+          keyExtractor={item => item.key}
           showsHorizontalScrollIndicator={false}
           style={styles.emojiCategoryRow}
           renderItem={({ item }) => (
@@ -478,9 +649,6 @@ const ChatScreen = ({ route, navigation }) => {
     );
   };
 
-  // ════════════════════════════════════════════════════════════
-  // RENDER INPUT ROW
-  // ════════════════════════════════════════════════════════════
   const renderInputRow = () => {
     if (isRecording) {
       return (
@@ -491,11 +659,13 @@ const ChatScreen = ({ route, navigation }) => {
           >
             <Icon name="delete" size={26} color="#e53935" />
           </TouchableOpacity>
+
           <View style={styles.recordingIndicatorRow}>
             <View style={styles.recordingDot} />
             <Text style={styles.recordingText}>Recording</Text>
             <Text style={styles.recordingTimer}>{recordTime}</Text>
           </View>
+
           <TouchableOpacity
             onPress={onStopAndSendRecord}
             style={styles.recordingSendBtn}
@@ -506,82 +676,177 @@ const ChatScreen = ({ route, navigation }) => {
       );
     }
 
+    const inEditMode = !!editingMessage;
+    const inputValue = inEditMode ? editText : newMessage;
+    const trimmedValue = inputValue.trim();
+
     return (
       <View
         style={{
-          flexDirection: 'row',
-          alignItems: 'flex-end',
+          flexDirection: 'column',
           backgroundColor: '#ECE5DD',
           paddingHorizontal: 6,
           paddingTop: 6,
           paddingBottom: 8,
         }}
       >
-        <TouchableOpacity
-          onPress={() => {
-            closeEmojiPicker();
-            setShowAttachmentMenu(true);
-          }}
-          style={styles.attachmentButton}
-        >
-          <Icon name="attach-file" size={24} color="#667781" />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={toggleEmojiPicker}
-          style={styles.emojiToggleButton}
-        >
-          <Icon name="emoji-emotions" size={24} color="#667781" />
-        </TouchableOpacity>
-
-        <TextInput
-          ref={inputRef}
-          style={[
-            styles.textInput,
-            {
-              flex: 1,
-              maxHeight: 100,
-              minHeight: 40,
-              backgroundColor: '#FFFFFF',
-              borderRadius: 20,
-              paddingHorizontal: 14,
-              paddingVertical: Platform.OS === 'ios' ? 10 : 8,
-              fontSize: 16,
-              color: '#333',
-            },
-          ]}
-          value={newMessage}
-          onChangeText={(text) => {
-            setNewMessage(text);
-            closeEmojiPicker();
-          }}
-          placeholder="Type a message..."
-          placeholderTextColor="#999"
-          multiline
-          maxLength={5000}
-          onFocus={() => {
-            closeEmojiPicker();
-            setTimeout(() => scrollToBottom(false), 150);
-          }}
-        />
-
-        {newMessage.trim() ? (
-          <TouchableOpacity
-            onPress={handleSend}
-            style={styles.sendButton}
-            disabled={isSending}
+        {inEditMode && (
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#f0f7f6',
+              borderRadius: 8,
+              paddingVertical: 8,
+              paddingHorizontal: 10,
+              marginBottom: 6,
+              borderBottomWidth: 1,
+              borderBottomColor: '#d9e8e7',
+            }}
           >
-            {isSending ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Icon name="send" size={22} color="#fff" />
-            )}
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity onPress={onStartRecord} style={styles.micButton}>
-            <Icon name="mic" size={24} color="#667781" />
-          </TouchableOpacity>
+            <View
+              style={{
+                width: 3,
+                borderRadius: 2,
+                backgroundColor: '#075E54',
+                alignSelf: 'stretch',
+                marginRight: 10,
+              }}
+            />
+
+            <View style={{ flex: 1 }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginBottom: 2,
+                }}
+              >
+                <Icon name="edit" size={13} color="#075E54" />
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontWeight: '700',
+                    color: '#075E54',
+                    marginLeft: 4,
+                  }}
+                >
+                  Edit Message
+                </Text>
+              </View>
+              <Text
+                style={{ fontSize: 13, color: '#667781' }}
+                numberOfLines={1}
+              >
+                {editingMessage?.content ||
+                  editingMessage?.message ||
+                  editingMessage?.text ||
+                  ''}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              onPress={cancelEdit}
+              style={{ padding: 4, marginLeft: 8 }}
+            >
+              <Icon name="close" size={20} color="#667781" />
+            </TouchableOpacity>
+          </View>
         )}
+
+        {replyingTo && !inEditMode && (
+          <ReplyBanner
+            message={replyingTo}
+            senderName={
+              replyingTo.sender?.name ||
+              (replyingTo.user_id === currentUser?.id ? 'You' : 'Contact')
+            }
+            showClose
+            onCancel={cancelReply}
+            compact={false}
+          />
+        )}
+
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
+          <TouchableOpacity
+            onPress={() => {
+              closeEmojiPicker();
+              setShowAttachmentMenu(true);
+            }}
+            style={styles.attachmentButton}
+          >
+            <Icon name="attach-file" size={24} color="#667781" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={toggleEmojiPicker}
+            style={styles.emojiToggleButton}
+          >
+            <Icon name="emoji-emotions" size={24} color="#667781" />
+          </TouchableOpacity>
+
+          <TextInput
+            ref={inputRef}
+            style={[
+              styles.textInput,
+              {
+                flex: 1,
+                maxHeight: 100,
+                minHeight: 40,
+                backgroundColor: '#FFFFFF',
+                borderRadius: 20,
+                paddingHorizontal: 14,
+                paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+                fontSize: 16,
+                color: '#333',
+              },
+            ]}
+            value={inputValue}
+            onChangeText={(text) => {
+              if (inEditMode) {
+                setEditText(text);
+              } else {
+                setNewMessage(text);
+              }
+              closeEmojiPicker();
+            }}
+            placeholder={inEditMode ? 'Edit message...' : 'Type a message...'}
+            placeholderTextColor="#999"
+            multiline
+            maxLength={5000}
+            onFocus={() => {
+              closeEmojiPicker();
+              setTimeout(() => scrollToBottom(false), 150);
+            }}
+          />
+
+          {trimmedValue ? (
+            <TouchableOpacity
+              onPress={
+                inEditMode
+                  ? handleEdit
+                  : () => handleSend(replyingTo, cancelReply)
+              }
+              style={[
+                styles.sendButton,
+                inEditMode && { backgroundColor: '#128C7E' },
+              ]}
+              disabled={inEditMode ? isEditing : isSending}
+            >
+              {inEditMode ? isEditing : isSending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Icon name="send" size={22} color="#fff" />
+              )}
+            </TouchableOpacity>
+          ) : (
+            !inEditMode && (
+              <TouchableOpacity onPress={onStartRecord} style={styles.micButton}>
+                <Icon name="mic" size={24} color="#667781" />
+              </TouchableOpacity>
+            )
+          )}
+        </View>
       </View>
     );
   };
@@ -589,16 +854,16 @@ const ChatScreen = ({ route, navigation }) => {
   return (
     <SafeAreaView
       edges={['top', 'bottom']}
-      style={{ flex: 1, backgroundColor: '#075E54' }}>
+      style={{ flex: 1, backgroundColor: '#075E54' }}
+    >
       <StatusBar backgroundColor="#075E54" barStyle="light-content" />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
-
+        keyboardVerticalOffset={0}
+      >
         <View style={{ flex: 1, backgroundColor: '#ECE5DD' }}>
-          {/* ══════════ HEADER ══════════ */}
           <View style={styles.header}>
             <TouchableOpacity
               onPress={() => navigation.goBack()}
@@ -620,6 +885,7 @@ const ChatScreen = ({ route, navigation }) => {
                 </View>
                 {isOnline && <View style={styles.headerOnlineIndicator} />}
               </View>
+
               <View style={styles.headerTextContainer}>
                 <Text style={styles.headerTitle}>{displayName}</Text>
                 <Text style={styles.headerSubtitle}>
@@ -638,7 +904,6 @@ const ChatScreen = ({ route, navigation }) => {
             </View>
           </View>
 
-          {/* ══════════ MESSAGES AREA ══════════ */}
           <View style={{ flex: 1, backgroundColor: '#ECE5DD' }}>
             {showNewMessageBadge && (
               <TouchableOpacity
@@ -679,7 +944,9 @@ const ChatScreen = ({ route, navigation }) => {
                   },
                 ]}
                 keyboardShouldPersistTaps="handled"
-                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                keyboardDismissMode={
+                  Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+                }
                 scrollEventThrottle={16}
                 onScroll={handleScroll}
                 onEndReached={() => {
@@ -705,13 +972,12 @@ const ChatScreen = ({ route, navigation }) => {
             )}
           </View>
 
-          {/* ══════════ INPUT + EMOJI AREA ══════════ */}
           {renderEmojiPicker()}
 
           <View
             style={[
               styles.bottomInputWrapper,
-              { paddingBottom: 0 }
+              { paddingBottom: 0 },
             ]}
           >
             {renderInputRow()}
@@ -719,7 +985,6 @@ const ChatScreen = ({ route, navigation }) => {
         </View>
       </KeyboardAvoidingView>
 
-      {/* ══════════ ALL MODALS ══════════ */}
       <Modal
         visible={showOptionsMenu}
         transparent
@@ -733,7 +998,7 @@ const ChatScreen = ({ route, navigation }) => {
           <View style={styles.optionsMenuContainer}>
             <TouchableOpacity
               style={styles.optionsMenuItem}
-              onPress={handleAudioCall}
+              onPress={() => handleOptionPress(handleAudioCall)}
             >
               <Icon
                 name="call"
@@ -743,9 +1008,10 @@ const ChatScreen = ({ route, navigation }) => {
               />
               <Text style={styles.optionsMenuText}>Audio Call</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.optionsMenuItem}
-              onPress={handleVideoCall}
+              onPress={() => handleOptionPress(handleVideoCall)}
             >
               <Icon
                 name="videocam"
@@ -755,9 +1021,10 @@ const ChatScreen = ({ route, navigation }) => {
               />
               <Text style={styles.optionsMenuText}>Video Call</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.optionsMenuItem}
-              onPress={handleSearch}
+              onPress={() => handleOptionPress(handleSearch)}
             >
               <Icon
                 name="search"
@@ -767,9 +1034,10 @@ const ChatScreen = ({ route, navigation }) => {
               />
               <Text style={styles.optionsMenuText}>Search</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.optionsMenuItem}
-              onPress={handleMedia}
+              onPress={() => handleOptionPress(handleMedia)}
             >
               <Icon
                 name="perm-media"
@@ -779,9 +1047,10 @@ const ChatScreen = ({ route, navigation }) => {
               />
               <Text style={styles.optionsMenuText}>Media, Links & Docs</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.optionsMenuItem}
-              onPress={handleViewContact}
+              onPress={() => handleOptionPress(handleViewContact)}
             >
               <Icon
                 name="person"
@@ -791,9 +1060,10 @@ const ChatScreen = ({ route, navigation }) => {
               />
               <Text style={styles.optionsMenuText}>View Contact</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.optionsMenuItem}
-              onPress={handleMute}
+              onPress={() => handleOptionPress(handleMute)}
             >
               <Icon
                 name="notifications-off"
@@ -803,9 +1073,10 @@ const ChatScreen = ({ route, navigation }) => {
               />
               <Text style={styles.optionsMenuText}>Mute Notifications</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.optionsMenuItem}
-              onPress={handleReport}
+              onPress={() => handleOptionPress(handleReport)}
             >
               <Icon
                 name="flag"
@@ -817,9 +1088,10 @@ const ChatScreen = ({ route, navigation }) => {
                 Report
               </Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.optionsMenuItem}
-              onPress={handleBlock}
+              onPress={() => handleOptionPress(handleBlock)}
             >
               <Icon
                 name="block"
@@ -849,6 +1121,7 @@ const ChatScreen = ({ route, navigation }) => {
           >
             <Icon name="close" size={28} color="#fff" />
           </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.imageViewerDownload}
             onPress={() =>
@@ -857,6 +1130,7 @@ const ChatScreen = ({ route, navigation }) => {
           >
             <Icon name="download" size={26} color="#fff" />
           </TouchableOpacity>
+
           {selectedImage && (
             <Image
               source={{ uri: selectedImage }}
@@ -884,17 +1158,16 @@ const ChatScreen = ({ route, navigation }) => {
               source={{ uri: selectedVideo }}
               style={styles.fullScreenVideo}
               resizeMode="contain"
-              controls={true}
+              controls
               paused={false}
               repeat={false}
-              onError={(error) => console.log('Video error:', error)}
+              onError={error => console.log('Video error:', error)}
               onLoadStart={() => console.log('Video loading...')}
               onLoad={() => console.log('Video loaded')}
             />
           )}
         </View>
       </Modal>
-
     </SafeAreaView>
   );
 };

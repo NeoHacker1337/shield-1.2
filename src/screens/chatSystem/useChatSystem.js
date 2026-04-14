@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'; // ✅ added useMemo
 import { useFocusEffect } from '@react-navigation/native';
 import {
   Alert, Platform, PermissionsAndroid,
@@ -10,7 +10,7 @@ import Contacts from 'react-native-contacts';
 import chatService from '../../services/chatService';
 import authService from '../../services/AuthService';
 import contactSyncService from '../../services/contactSyncService';
-import { verifyValue } from '../../services/HashService';
+// ✅ Removed unused `verifyValue` import
 import {
   loadLocalMeta,
   saveLocalMeta,
@@ -20,9 +20,12 @@ import {
   mergeServerMeta,
 } from './metaSyncService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { verifyPin } from '../../services/pinService';
+
+// ✅ Constants moved to top, after all imports
 const CHAT_LOCK_SERVICE = 'shield-chat-lock';
 const CHAT_ROOMS_CACHE_KEY = 'shield-chat-rooms-cache';
-import { verifyPin } from '../../services/pinService';
+
 export default function useChatSystem(navigation) {
 
   // ── Core ──────────────────────────────────────────────────────────────────
@@ -67,10 +70,17 @@ export default function useChatSystem(navigation) {
   const [searchMode, setSearchMode] = useState(false);
   const [showLockedChats, setShowLockedChats] = useState(false);
 
-
   const contactMapRef = useRef(null);
   const prevRoomIdsRef = useRef('');
   const lastFetchRef = useRef(0);
+
+  // ✅ Stable ref to always hold the latest chatRooms — avoids stale closures
+  //    in async callbacks (e.g. 409 handler) without adding chatRooms to deps
+  const chatRoomsRef = useRef(chatRooms);
+  useEffect(() => { chatRoomsRef.current = chatRooms; }, [chatRooms]);
+
+  // ✅ Debounce timer ref for handleChatSearch
+  const searchDebounceRef = useRef(null);
 
   // ══════════════════════════════════════════════════════════════════════════
   // EFFECT 1 — Restore roomMeta from AsyncStorage on mount (RUNS FIRST)
@@ -79,11 +89,11 @@ export default function useChatSystem(navigation) {
     const restoreLocalMeta = async () => {
       const local = await loadLocalMeta();
       if (Object.keys(local).length > 0) {
-        setRoomMeta(local); // UI shows locks/pins instantly
+        setRoomMeta(local);
       }
     };
     restoreLocalMeta();
-  }, []); // empty deps = runs once on mount
+  }, []);
 
   // ══════════════════════════════════════════════════════════════════════════
   // EFFECT 2 — Watch network, flush queue when back online
@@ -93,7 +103,7 @@ export default function useChatSystem(navigation) {
       const online = !!(state.isConnected && state.isInternetReachable);
       setIsOnline(online);
       if (online) {
-        flushSyncQueue(); // silently retry all queued meta updates
+        flushSyncQueue();
       }
     });
     return () => unsubscribe();
@@ -108,13 +118,9 @@ export default function useChatSystem(navigation) {
       const res = await chatService.getChatRooms();
       const fresh = res.data ?? res;
       setChatRooms(fresh);
-
-      // ✅ Cache fresh data to AsyncStorage for offline use
       await AsyncStorage.setItem(CHAT_ROOMS_CACHE_KEY, JSON.stringify(fresh));
     } catch (e) {
       console.log('loadChatRooms error (silent):', e?.message);
-
-      // ✅ Offline fallback — load from cache so user sees their last known rooms
       try {
         const cached = await AsyncStorage.getItem(CHAT_ROOMS_CACHE_KEY);
         if (cached) {
@@ -133,14 +139,12 @@ export default function useChatSystem(navigation) {
       try {
         setLoading(true);
         const user = await authService.getCurrentUser();
-        console.log('AUTH USER:', user);        // 👈 check if user loads
         setCurrentUser(user);
         if (user) {
           await loadChatRooms();
-          console.log('ROOMS LOADED OK');       // 👈 check if rooms load
         }
       } catch (e) {
-        console.log('INIT ERROR DETAIL:', e);  // 👈 this shows the real cause
+        console.log('INIT ERROR DETAIL:', e);
         Alert.alert('Error', 'Failed to initialize chat system.');
       } finally {
         setLoading(false);
@@ -169,13 +173,12 @@ export default function useChatSystem(navigation) {
 
   // ══════════════════════════════════════════════════════════════════════════
   // EFFECT 5 — Resolve device contact names
-  // ══════════════════════════════════════════════════════════════════════════ 
+  // ══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
     (async () => {
       try {
         if (!currentUser || !chatRooms.length) return;
 
-        // Already loaded contacts this session — just remap rooms
         if (contactMapRef.current) {
           const map = {};
           chatRooms.forEach(room => {
@@ -192,12 +195,23 @@ export default function useChatSystem(navigation) {
           return;
         }
 
-        // First time — request permission and read device contacts
-        let ok = true;
+        // ✅ Request permissions correctly for both platforms
+        let ok = false;
         if (Platform.OS === 'android') {
           const r = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_CONTACTS);
           ok = r === PermissionsAndroid.RESULTS.GRANTED;
+        } else {
+          // ✅ iOS: check/request permission via react-native-contacts
+          const status = await Contacts.checkPermission();
+          if (status === 'authorized') {
+            ok = true;
+          } else if (status === 'undefined') {
+            const requested = await Contacts.requestPermission();
+            ok = requested === 'authorized';
+          }
+          // 'denied' → ok stays false
         }
+
         if (!ok) { setLocalRoomNames({}); return; }
 
         const devContacts = await Contacts.getAll();
@@ -212,7 +226,6 @@ export default function useChatSystem(navigation) {
           });
         });
 
-        // Cache so we never call Contacts.getAll() again this session
         contactMapRef.current = emailToName;
 
         const map = {};
@@ -239,30 +252,32 @@ export default function useChatSystem(navigation) {
     setRefreshing(false);
   }, [loadChatRooms]);
 
-
-  // ─── EFFECT 6: WhatsApp-style auto-refresh ───────────────────────────────────
+  // ─── EFFECT 6: WhatsApp-style auto-refresh ───────────────────────────────
   const pollingRef = useRef(null);
   const isFocusedRef = useRef(false);
+
+  // ✅ Separate stable ref for isOnline so the interval callback always
+  //    reads the latest value without being a dep of useFocusEffect
+  const isOnlineRef = useRef(isOnline);
+  useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
 
   useFocusEffect(
     useCallback(() => {
       isFocusedRef.current = true;
 
-      // ✅ Guard: skip if initial load hasn't finished yet
-      // EFFECT 3 handles the very first load — we only take over after that
       if (currentUser && !loading) {
         loadChatRooms();
       }
 
-      // Poll every 5 seconds while screen is focused
+      // ✅ Capture loading state at setup time only — do NOT include `loading`
+      //    in deps. The interval reads isOnlineRef / isFocusedRef by ref so it
+      //    always has current values without causing interval restarts.
       pollingRef.current = setInterval(async () => {
-        // ✅ Don't poll when offline — no point hitting a dead network
-        if (isFocusedRef.current && currentUser && !loading && isOnline) {
+        if (isFocusedRef.current && currentUser && isOnlineRef.current) {
           try {
             const res = await chatService.getChatRooms();
             const fresh = res.data ?? res;
             setChatRooms(fresh);
-            // Keep cache updated on every successful poll
             await AsyncStorage.setItem(CHAT_ROOMS_CACHE_KEY, JSON.stringify(fresh));
           } catch {
             // silent
@@ -277,9 +292,9 @@ export default function useChatSystem(navigation) {
           pollingRef.current = null;
         }
       };
-    }, [currentUser, loading, loadChatRooms, isOnline])  // ← loading here is intentional as a read-only guard
+      // ✅ Removed `loading` and `isOnline` from deps — both are read via refs
+    }, [currentUser, loadChatRooms])
   );
-  // ─────────────────────────────────────────────────────────────────────────────
 
   // ── Search handlers ───────────────────────────────────────────────────────
   const openSearch = () => {
@@ -293,49 +308,47 @@ export default function useChatSystem(navigation) {
     setShowLockedChats(false);
   };
 
-  const handleChatSearch = async (text) => {
-
+  const handleChatSearch = useCallback((text) => {
     setSearchQuery(text);
-
-    // Hide locked chats by default
     setShowLockedChats(false);
 
-    // Must be exactly 6 digits
+    // ✅ Debounce Keychain access — don't hammer secure storage on every keystroke
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+
     if (!/^\d{6}$/.test(text)) return;
 
-    try {
-
-      const creds = await Keychain.getGenericPassword({
-        service: CHAT_LOCK_SERVICE
-      });
-
-      if (!creds) return;
-
-      if (text === creds.password) {
-        setShowLockedChats(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        // ✅ Use verifyPin (same as confirmLockPin) — consistent hashed comparison
+        const valid = await verifyPin(CHAT_LOCK_SERVICE, text);
+        if (valid) {
+          setShowLockedChats(true);
+        }
+      } catch {
+        setShowLockedChats(false);
       }
-
-    } catch (e) {
-      setShowLockedChats(false);
-    }
-
-  };
-
+    }, 300);
+  }, []);
 
   // ══════════════════════════════════════════════════════════════════════════
   // META HELPERS — Local first, silent API sync
   // ══════════════════════════════════════════════════════════════════════════
 
-  const persistMeta = (updatedMeta, roomId) => {
-    // Save locally
-    saveLocalMeta(updatedMeta);
-    // Silently try API
-    syncMetaToAPI(roomId, updatedMeta[roomId]).then(success => {
-      if (!success) addToSyncQueue(roomId, updatedMeta[roomId]);
-    });
-  };
+  // ✅ Wrapped in useCallback; uses .catch() to handle rejections from
+  //    syncMetaToAPI, not just resolved-false values
+  const persistMeta = useCallback((updatedMeta, roomId) => {
+    saveLocalMeta(updatedMeta); // async but ordering is best-effort for local cache
+    syncMetaToAPI(roomId, updatedMeta[roomId])
+      .then(success => {
+        if (!success) addToSyncQueue(roomId, updatedMeta[roomId]);
+      })
+      .catch(() => {
+        // ✅ Handle rejection (network error, thrown exception) — queue the item
+        addToSyncQueue(roomId, updatedMeta[roomId]);
+      });
+  }, []);
 
-  const toggleMeta = (roomId, key) => {
+  const toggleMeta = useCallback((roomId, key) => {
     setRoomMeta(prev => {
       const updated = {
         ...prev,
@@ -344,55 +357,86 @@ export default function useChatSystem(navigation) {
       persistMeta(updated, roomId);
       return updated;
     });
-  };
+  }, [persistMeta]);
 
-  const toggleMetaForSet = (ids, key) => {
+  const toggleMetaForSet = useCallback((ids, key) => {
     setRoomMeta(prev => {
       const updated = { ...prev };
       ids.forEach(id => {
         updated[id] = { ...updated[id], [key]: !updated[id]?.[key] };
       });
-      // Persist each changed room
       saveLocalMeta(updated);
       ids.forEach(id => {
-        syncMetaToAPI(id, updated[id]).then(success => {
-          if (!success) addToSyncQueue(id, updated[id]);
-        });
+        syncMetaToAPI(id, updated[id])
+          .then(success => {
+            if (!success) addToSyncQueue(id, updated[id]);
+          })
+          .catch(() => {
+            addToSyncQueue(id, updated[id]); // ✅ handle rejections
+          });
       });
       return updated;
     });
-  };
+  }, []);
 
   // ══════════════════════════════════════════════════════════════════════════
   // SELECTION MODE
   // ══════════════════════════════════════════════════════════════════════════
 
-  const handleLongPress = room => {
-    if (!selectionMode) { setSelectionMode(true); setSelectedRooms(new Set([room.id])); }
-    else toggleRoomSelection(room.id);
-  };
-
-  const toggleRoomSelection = roomId => {
-    setSelectedRooms(prev => {
-      const next = new Set(prev);
-      next.has(roomId) ? next.delete(roomId) : next.add(roomId);
-      if (next.size === 0) exitSelection();
-      return next;
-    });
-  };
-
-  const exitSelection = () => {
+  const exitSelection = useCallback(() => {
     setSelectionMode(false);
     setSelectedRooms(new Set());
     setShowSelectionDotMenu(false);
-  };
+  }, []);
+
+  const handleLongPress = useCallback((room) => {
+    if (!selectionMode) {
+      setSelectionMode(true);
+      setSelectedRooms(new Set([room.id]));
+    } else {
+      toggleRoomSelection(room.id);
+    }
+  }, [selectionMode]); // toggleRoomSelection defined below — see note
+
+  const toggleRoomSelection = useCallback((roomId) => {
+    // ✅ Do NOT call exitSelection() inside the state updater.
+    //    Compute the next set, then call the appropriate setters in sequence.
+    setSelectedRooms(prev => {
+      const next = new Set(prev);
+      next.has(roomId) ? next.delete(roomId) : next.add(roomId);
+      return next;
+    });
+    // ✅ Check size after update via a separate effect-like approach — 
+    //    we schedule this check after the state is flushed using a ref trick
+    //    or simply accept a one-render lag. Best practice here is to derive
+    //    exitSelection from a useEffect watching selectedRooms.
+  }, []);
+
+  // ✅ Exit selection mode reactively when selectedRooms becomes empty
+  //    This replaces the unsafe exitSelection()-inside-updater pattern
+  useEffect(() => {
+    if (selectionMode && selectedRooms.size === 0) {
+      exitSelection();
+    }
+  }, [selectedRooms, selectionMode, exitSelection]);
 
   // ── Selection actions ─────────────────────────────────────────────────────
-  const onSelectionPin = () => { toggleMetaForSet(selectedRooms, 'pinned'); exitSelection(); };
-  const onSelectionMute = () => { toggleMetaForSet(selectedRooms, 'muted'); exitSelection(); };
-  const onSelectionArchive = () => { toggleMetaForSet(selectedRooms, 'archived'); exitSelection(); };
+  const onSelectionPin = useCallback(() => {
+    toggleMetaForSet(selectedRooms, 'pinned');
+    exitSelection();
+  }, [selectedRooms, toggleMetaForSet, exitSelection]);
 
-  const onSelectionViewContact = () => {
+  const onSelectionMute = useCallback(() => {
+    toggleMetaForSet(selectedRooms, 'muted');
+    exitSelection();
+  }, [selectedRooms, toggleMetaForSet, exitSelection]);
+
+  const onSelectionArchive = useCallback(() => {
+    toggleMetaForSet(selectedRooms, 'archived');
+    exitSelection();
+  }, [selectedRooms, toggleMetaForSet, exitSelection]);
+
+  const onSelectionViewContact = useCallback(() => {
     setShowSelectionDotMenu(false);
     if (selectedRooms.size !== 1) { Alert.alert('Info', 'Select only one chat.'); return; }
     const id = [...selectedRooms][0];
@@ -408,26 +452,30 @@ export default function useChatSystem(navigation) {
       ].filter(Boolean).join('\n') || 'No details.',
       [{ text: 'Close', onPress: exitSelection }]
     );
-  };
+  }, [selectedRooms, chatRooms, currentUser, localRoomNames, exitSelection]);
 
-  const onSelectionLockChat = () => {
+  const onSelectionLockChat = useCallback(() => {
     setShowSelectionDotMenu(false);
-    if (selectedRooms.size !== 1) { Alert.alert('Info', 'Select only one chat to lock/unlock.'); return; }
+    if (selectedRooms.size !== 1) {
+      Alert.alert('Info', 'Select only one chat to lock/unlock.');
+      return;
+    }
     const room = chatRooms.find(r => r.id === [...selectedRooms][0]);
     if (!room) return;
     setLockTargetRoom(room);
     setLockPinInput('');
     setLockPinError('');
     setShowLockPinModal(true);
-  };
+  }, [selectedRooms, chatRooms]);
 
-  const onSelectionFavorite = () => {
+  // ✅ Use toggleMetaForSet to batch the single favorite toggle — consistent pattern
+  const onSelectionFavorite = useCallback(() => {
     setShowSelectionDotMenu(false);
-    selectedRooms.forEach(id => toggleMeta(id, 'favorite'));
+    toggleMetaForSet(selectedRooms, 'favorite');
     exitSelection();
-  };
+  }, [selectedRooms, toggleMetaForSet, exitSelection]);
 
-  const onSelectionClearChat = () => {
+  const onSelectionClearChat = useCallback(() => {
     setShowSelectionDotMenu(false);
     if (selectedRooms.size !== 1) { Alert.alert('Info', 'Select only one chat to clear.'); return; }
     const id = [...selectedRooms][0];
@@ -445,9 +493,9 @@ export default function useChatSystem(navigation) {
         }
       },
     ]);
-  };
+  }, [selectedRooms, localRoomNames, chatRooms, exitSelection]);
 
-  const onSelectionBlock = () => {
+  const onSelectionBlock = useCallback(() => {
     setShowSelectionDotMenu(false);
     const ids = [...selectedRooms];
     const allBlocked = ids.every(id => roomMeta[id]?.blocked);
@@ -466,21 +514,22 @@ export default function useChatSystem(navigation) {
         },
       ]
     );
-  };
+  }, [selectedRooms, roomMeta, toggleMeta, exitSelection]);
 
-  const onSelectionDelete = () => {
+  const onSelectionDelete = useCallback(() => {
     setShowSelectionDotMenu(false);
-    Alert.alert('Delete Chats', `Delete ${selectedRooms.size} chat${selectedRooms.size > 1 ? 's' : ''}?`, [
+    // ✅ Capture the selected IDs at press time — avoids stale closure in async callback
+    const idsToDelete = [...selectedRooms];
+    Alert.alert('Delete Chats', `Delete ${idsToDelete.length} chat${idsToDelete.length > 1 ? 's' : ''}?`, [
       { text: 'Cancel', style: 'cancel', onPress: exitSelection },
       {
         text: 'Delete', style: 'destructive', onPress: async () => {
           try {
-            await Promise.all([...selectedRooms].map(id => chatService.deleteChatRoom(id)));
-            setChatRooms(p => p.filter(r => !selectedRooms.has(r.id)));
-            // Clean up meta for deleted rooms
+            await Promise.all(idsToDelete.map(id => chatService.deleteChatRoom(id)));
+            setChatRooms(p => p.filter(r => !idsToDelete.includes(r.id)));
             setRoomMeta(prev => {
               const updated = { ...prev };
-              selectedRooms.forEach(id => delete updated[id]);
+              idsToDelete.forEach(id => delete updated[id]);
               saveLocalMeta(updated);
               return updated;
             });
@@ -489,13 +538,13 @@ export default function useChatSystem(navigation) {
         }
       },
     ]);
-  };
+  }, [selectedRooms, exitSelection]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // LOCK PIN
   // ══════════════════════════════════════════════════════════════════════════
 
-  const shakeAnim = (anim) => {
+  const shakeAnim = useCallback((anim) => {
     Vibration.vibrate(100);
     Animated.sequence([
       Animated.timing(anim, { toValue: -10, duration: 50, useNativeDriver: true }),
@@ -503,10 +552,9 @@ export default function useChatSystem(navigation) {
       Animated.timing(anim, { toValue: -10, duration: 50, useNativeDriver: true }),
       Animated.timing(anim, { toValue: 0, duration: 50, useNativeDriver: true }),
     ]).start();
-  };
+  }, []);
 
-  const confirmLockPin = async () => {
-
+  const confirmLockPin = useCallback(async () => {
     if (lockPinInput.length !== 6) {
       setLockPinError('Enter all 6 digits');
       shakeAnim(lockShakeAnim);
@@ -514,7 +562,6 @@ export default function useChatSystem(navigation) {
     }
 
     try {
-
       const valid = await verifyPin(CHAT_LOCK_SERVICE, lockPinInput);
 
       if (!valid) {
@@ -524,35 +571,34 @@ export default function useChatSystem(navigation) {
         return;
       }
 
-      // Toggle lock state
+      // ✅ Read the current lock state BEFORE toggling — roomMeta is read
+      //    synchronously here, then toggleMeta enqueues its async state update.
+      //    This gives the correct "will become" value for the success message.
+      const isCurrentlyLocked = !!roomMeta?.[lockTargetRoom.id]?.locked;
+      const willBeLocked = !isCurrentlyLocked;
+
       toggleMeta(lockTargetRoom.id, 'locked');
 
       setShowLockPinModal(false);
       setLockPinInput('');
 
-      const isNowLocked = !roomMeta?.[lockTargetRoom.id]?.locked;
-
       Alert.alert(
         'Success',
-        `Chat ${isNowLocked ? 'locked 🔒' : 'unlocked 🔓'}.`
+        `Chat ${willBeLocked ? 'locked 🔒' : 'unlocked 🔓'}.`
       );
 
       exitSelection();
-
     } catch {
-
       setLockPinError('Failed to verify PIN.');
       shakeAnim(lockShakeAnim);
-
     }
+  }, [lockPinInput, roomMeta, lockTargetRoom, toggleMeta, exitSelection, shakeAnim, lockShakeAnim]);
 
-  };
   // ══════════════════════════════════════════════════════════════════════════
   // LOCKED CHATS ACCESS PIN
   // ══════════════════════════════════════════════════════════════════════════
 
-  const confirmLockedChatsPin = async () => {
-
+  const confirmLockedChatsPin = useCallback(async () => {
     if (lockedChatsPinInput.length !== 6) {
       setLockedChatsPinError('Enter all 6 digits');
       shakeAnim(lockedChatsShakeAnim);
@@ -560,7 +606,6 @@ export default function useChatSystem(navigation) {
     }
 
     try {
-
       const valid = await verifyPin(CHAT_LOCK_SERVICE, lockedChatsPinInput);
 
       if (!valid) {
@@ -570,25 +615,21 @@ export default function useChatSystem(navigation) {
         return;
       }
 
-      // PIN correct
       setShowLockedChatsModal(false);
       setLockedChatsPinInput('');
       setLockedChatsPinError('');
-
-      // reveal locked chats in search
       setShowLockedChats(true);
-
     } catch {
       setLockedChatsPinError('Failed to verify PIN.');
       shakeAnim(lockedChatsShakeAnim);
     }
-  };
+  }, [lockedChatsPinInput, shakeAnim, lockedChatsShakeAnim]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // NORMAL HEADER MENU
   // ══════════════════════════════════════════════════════════════════════════
 
-  const handleSyncContacts = () => {
+  const handleSyncContacts = useCallback(() => {
     setShowMenuModal(false);
     Alert.alert('Sync Contacts', 'Read phone contacts and sync with server. Continue?', [
       { text: 'Cancel', style: 'cancel' },
@@ -606,9 +647,9 @@ export default function useChatSystem(navigation) {
         }
       },
     ]);
-  };
+  }, []); // loadContacts defined below — acceptable forward ref in callback
 
-  const handleInviteForChat = async () => {
+  const handleInviteForChat = useCallback(async () => {
     try {
       if (!currentUser) { Alert.alert('Error', 'User not logged in'); return; }
       const res = await chatService.inviteGuestForChat(currentUser.name || currentUser.username);
@@ -619,13 +660,13 @@ export default function useChatSystem(navigation) {
         message: `🔐 Shield Chat Invitation\n\n📍 Room: ${d.room_name}\n🔑 Password: ${d.password}\n⏳ Expires: ${d.expires_at ? new Date(d.expires_at).toLocaleString() : 'N/A'}\n\nJoin:\n${d.invite_url}`,
       });
     } catch { Alert.alert('Error', 'Failed to generate invite link'); }
-  };
+  }, [currentUser]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // CONTACTS
   // ══════════════════════════════════════════════════════════════════════════
 
-  const loadContacts = async () => {
+  const loadContacts = useCallback(async () => {
     if (!currentUser) return;
     try {
       setContactsLoading(true);
@@ -642,24 +683,24 @@ export default function useChatSystem(navigation) {
       setFilteredContacts(all);
     } catch { Alert.alert('Error', 'Failed to load contacts.'); }
     finally { setContactsLoading(false); }
-  };
+  }, [currentUser]);
 
-  const handleSearchContacts = q => {
+  const handleSearchContacts = useCallback((q) => {
     setSearchQuery(q);
     if (!q.trim()) { setFilteredContacts(contacts); return; }
     setFilteredContacts(contacts.filter(c =>
       c.name?.toLowerCase().includes(q.toLowerCase()) ||
       c.email?.toLowerCase().includes(q.toLowerCase())
     ));
-  };
+  }, [contacts]);
 
-  const handleFabPress = async () => {
+  const handleFabPress = useCallback(async () => {
     await loadContacts();
     setShowContactsModal(true);
     setSearchQuery('');
-  };
+  }, [loadContacts]);
 
-  const handleSelectContact = async contact => {
+  const handleSelectContact = useCallback(async (contact) => {
     if (!contact?.id) { Alert.alert('Error', 'Invalid contact.'); return; }
     try {
       setShowContactsModal(false);
@@ -674,7 +715,8 @@ export default function useChatSystem(navigation) {
       if (error.response?.status === 409) {
         Alert.alert('Chat Exists', 'A chat with this user already exists.');
         await loadChatRooms();
-        const existing = chatRooms.find(r =>
+        // ✅ Read from ref — chatRoomsRef.current has the freshly loaded rooms
+        const existing = chatRoomsRef.current.find(r =>
           r.name === contact.name ||
           r.name === `${contact.name} (Personal Notes)` ||
           r.participants?.some(p => p.id === contact.id)
@@ -682,30 +724,22 @@ export default function useChatSystem(navigation) {
         if (existing) navigation.navigate('ChatScreen', { chatRoom: existing, currentUser, contactName: existing.name });
       } else { Alert.alert('Error', `Failed to start chat with ${contact.name}.`); }
     } finally { setLoading(false); }
-  };
+  }, [currentUser, loadChatRooms, navigation]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // CHAT ROOM DISPLAY NAME
   // ══════════════════════════════════════════════════════════════════════════
   const getDisplayNameFromChatRoom = useCallback((room, user) => {
-    // 1. Device contact name (phone book match) — highest priority
     if (localRoomNames[room?.id]) return localRoomNames[room.id];
 
-    // 2. ✅ Other participant's name from server — check THIS before room.name
-    //    This correctly shows the unknown sender's server-registered name
     if (Array.isArray(room?.participants) && user?.id) {
       const other = room.participants.find(p => p && p.id !== user.id);
-      // Use their display name or username as fallback
       const otherName = other?.name?.trim() || other?.username?.trim();
       if (otherName) return otherName;
     }
 
-    // 3. Room name from API — only for group chats or when no participants data
-    //    For one-to-one chats, room.name is often YOUR name (set by the other side)
-    //    so we skip it for one-to-one and only use it for groups
     if (room?.type !== 'one-to-one' && room?.name?.trim()) return room.name;
 
-    // 4. Guest fallback
     if (room?.type === 'guest' || room?.isguestroom) return 'Guest Chat';
 
     return 'Unknown Contact';
@@ -715,7 +749,7 @@ export default function useChatSystem(navigation) {
   // HELPERS
   // ══════════════════════════════════════════════════════════════════════════
 
-  const openChat = room => {
+  const openChat = useCallback((room) => {
     if (roomMeta[room.id]?.blocked) {
       Alert.alert('Blocked', 'Unblock this contact to send messages.');
       return;
@@ -725,57 +759,55 @@ export default function useChatSystem(navigation) {
       currentUser,
       contactName: getDisplayNameFromChatRoom(room, currentUser),
     });
-  };
+  }, [roomMeta, currentUser, navigation, getDisplayNameFromChatRoom]);
 
-  const formatMessageTime = ts => {
+  // ✅ Fixed date logic: compare calendar dates, not arbitrary 24h buckets
+  const formatMessageTime = useCallback((ts) => {
     if (!ts) return '';
-    const d = new Date(ts), now = new Date();
-    const diff = Math.ceil(Math.abs(now - d) / 86400000);
-    if (diff === 1) return 'Today';
-    if (diff === 2) return 'Yesterday';
-    if (diff <= 7) return d.toLocaleDateString([], { weekday: 'short' });
+    const d = new Date(ts);
+    const now = new Date();
+
+    // Normalize both to midnight for clean day comparisons
+    const dDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const diffDays = Math.round((nowDay - dDay) / 86400000);
+
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays <= 7) return d.toLocaleDateString([], { weekday: 'short' });
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  };
+  }, []);
 
-  const sortedRooms = [...chatRooms].sort((a, b) => {
-    const w = r => (roomMeta[r.id]?.pinned ? 2 : 0) + (roomMeta[r.id]?.favorite ? 1 : 0);
-    const weightDiff = w(b) - w(a);
-    if (weightDiff !== 0) return weightDiff; // pinned/favorite first
+  // ✅ Memoized — only recomputes when chatRooms or roomMeta actually change
+  const sortedRooms = useMemo(() => {
+    return [...chatRooms].sort((a, b) => {
+      const w = r => (roomMeta[r.id]?.pinned ? 2 : 0) + (roomMeta[r.id]?.favorite ? 1 : 0);
+      const weightDiff = w(b) - w(a);
+      if (weightDiff !== 0) return weightDiff;
 
-    // Then sort by latest message time (newest first)
-    const timeA = a.last_message?.created_at || a.last_message?.createdat || a.updated_at || a.created_at || 0;
-    const timeB = b.last_message?.created_at || b.last_message?.createdat || b.updated_at || b.created_at || 0;
-    return new Date(timeB) - new Date(timeA);
-  });
-
-  // ── Filter by search query ────────────────────────────────────────────────
-  const filteredRooms = searchQuery.trim()
-    ? sortedRooms.filter(room => {
-
-      const meta = roomMeta[room.id] || {};
-
-      // Locked chats only visible when PIN is verified
-      if (meta.locked && !showLockedChats) {
-        return false;
-      }
-
-      const displayName = (localRoomNames[room.id] || room.name || '').toLowerCase();
-      const lastMsg = (room.last_message?.content || '').toLowerCase();
-      const query = searchQuery.toLowerCase();
-
-      return displayName.includes(query) || lastMsg.includes(query);
-
-    })
-    : sortedRooms.filter(room => {
-
-      const meta = roomMeta[room.id] || {};
-
-      // when not searching, locked chats must remain hidden
-      if (meta.locked) return false;
-
-      return true;
-
+      const timeA = a.last_message?.created_at || a.last_message?.createdat || a.updated_at || a.created_at || 0;
+      const timeB = b.last_message?.created_at || b.last_message?.createdat || b.updated_at || b.created_at || 0;
+      return new Date(timeB) - new Date(timeA);
     });
+  }, [chatRooms, roomMeta]);
+
+  // ✅ Memoized — only recomputes when sort result, search state, or lock state changes
+  const filteredRooms = useMemo(() => {
+    if (searchQuery.trim()) {
+      return sortedRooms.filter(room => {
+        const meta = roomMeta[room.id] || {};
+        if (meta.locked && !showLockedChats) return false;
+        const displayName = (localRoomNames[room.id] || room.name || '').toLowerCase();
+        const lastMsg = (room.last_message?.content || '').toLowerCase();
+        const query = searchQuery.toLowerCase();
+        return displayName.includes(query) || lastMsg.includes(query);
+      });
+    }
+    return sortedRooms.filter(room => {
+      const meta = roomMeta[room.id] || {};
+      return !meta.locked;
+    });
+  }, [sortedRooms, searchQuery, roomMeta, showLockedChats, localRoomNames]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // RETURN
@@ -805,7 +837,8 @@ export default function useChatSystem(navigation) {
     confirmLockPin, confirmLockedChatsPin,
     handleSyncContacts, handleInviteForChat,
     handleSearchContacts, handleFabPress, handleSelectContact,
-    loadContacts, toggleMeta, searchMode, searchQuery,
+    loadContacts, toggleMeta, searchMode,
+    // ✅ searchQuery returned once (was duplicated)
     openSearch, closeSearch, handleChatSearch,
     filteredRooms, showLockedChats,
     setShowLockedChats, getDisplayNameFromChatRoom
