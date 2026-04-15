@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, Alert,
   PermissionsAndroid, Platform, ActivityIndicator,
   TextInput, Modal, BackHandler, Animated, Easing,
   TouchableWithoutFeedback, Dimensions, Linking,
-  AppState, NativeModules,
+  AppState, NativeModules, StatusBar, SafeAreaView
 } from 'react-native';
+
 import { useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import RNFS from 'react-native-fs';
@@ -52,15 +53,30 @@ import {
   SECURITY_HIDE_SERVICE
 } from '../../services/pinService';
 
-
 import deviceService from './../../services/deviceService';
 
-const { width } = Dimensions.get('window');
+// ─────────────────────────────────────────────────────────
+//  CONSTANTS
+// ─────────────────────────────────────────────────────────
+const DRAWER_WIDTH_RATIO = 0.75;
+const DRAWER_ANIMATION_DURATION = 280;
 
 // ─────────────────────────────────────────────────────────
 //  MAIN COMPONENT
 // ─────────────────────────────────────────────────────────
 const FileLockerScreen = ({ navigation }) => {
+
+  // ─── Dimension-aware drawer width ─────────────────────
+  const [screenWidth, setScreenWidth] = useState(() => Dimensions.get('window').width);
+  const drawerWidth = useMemo(() => screenWidth * DRAWER_WIDTH_RATIO, [screenWidth]);
+
+  // Listen for dimension changes (rotation, etc.)
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener('change', ({ window }) => {
+      setScreenWidth(window.width);
+    });
+    return () => subscription?.remove();
+  }, []);
 
   // ─── Vault Hook ───────────────────────────────────────
   const {
@@ -121,15 +137,127 @@ const FileLockerScreen = ({ navigation }) => {
   const [newFolderConfirmPassword, setNewFolderConfirmPassword] = useState('');
   const [newFolderStep, setNewFolderStep] = useState(1);
 
-  // Drawer State
-  const drawerWidth = width * 0.75;
-  const drawerOffset = useRef(new Animated.Value(-drawerWidth)).current;
+  // ─── Drawer State (FIXED: proper animation management) ─
+  const drawerOffset = useRef(new Animated.Value(-1000)).current; // Start off-screen; set properly below
   const overlayOpacity = useRef(new Animated.Value(0)).current;
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerAnimating = useRef(false);
+  const drawerMounted = useRef(false); // Track if drawer should render
+
+  // ─── Derived State ────────────────────────────────────
   const isAtRoot = currentPath === ROOT_DIRECTORY;
-  const isInsideUnlockedFolder = !!unlockedFolderPath && currentPath.startsWith(unlockedFolderPath);
+  const isInsideUnlockedFolder = useMemo(
+    () => !!unlockedFolderPath && currentPath.startsWith(unlockedFolderPath),
+    [unlockedFolderPath, currentPath]
+  );
 
+  // ─── Context ──────────────────────────────────────────
+  const {
+    securityHidden: securityHideEnabled,
+    setSecurityHidden
+  } = useSecurityVisibility();
 
+  const {
+    chatHidden: chatHideEnabled,
+    setChatHidden
+  } = useChatVisibility();
+
+  // ─── Sync drawer offset when drawerWidth changes ─────
+  useEffect(() => {
+    if (!drawerOpen) {
+      drawerOffset.setValue(-drawerWidth);
+    }
+  }, [drawerWidth]);
+
+  // ─── Drawer Animation (FIXED: prevents hanging) ──────
+  const openDrawer = useCallback(() => {
+    if (drawerAnimating.current) return;
+    drawerAnimating.current = true;
+    drawerMounted.current = true;
+    setDrawerOpen(true);
+
+    // Ensure starting position is correct before animating
+    drawerOffset.setValue(-drawerWidth);
+
+    Animated.parallel([
+      Animated.timing(drawerOffset, {
+        toValue: 0,
+        duration: DRAWER_ANIMATION_DURATION,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.cubic),
+      }),
+      Animated.timing(overlayOpacity, {
+        toValue: 0.7,
+        duration: DRAWER_ANIMATION_DURATION,
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      drawerAnimating.current = false;
+    });
+  }, [drawerWidth, drawerOffset, overlayOpacity]);
+
+  const closeDrawer = useCallback(() => {
+    if (drawerAnimating.current) return;
+    drawerAnimating.current = true;
+
+    Animated.parallel([
+      Animated.timing(drawerOffset, {
+        toValue: -drawerWidth,
+        duration: DRAWER_ANIMATION_DURATION,
+        useNativeDriver: true,
+        easing: Easing.in(Easing.cubic),
+      }),
+      Animated.timing(overlayOpacity, {
+        toValue: 0,
+        duration: DRAWER_ANIMATION_DURATION,
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      drawerAnimating.current = false;
+      drawerMounted.current = false;
+      setDrawerOpen(false);
+    });
+  }, [drawerWidth, drawerOffset, overlayOpacity]);
+
+  const toggleDrawer = useCallback(() => {
+    if (drawerOpen) {
+      closeDrawer();
+    } else {
+      openDrawer();
+    }
+  }, [drawerOpen, openDrawer, closeDrawer]);
+
+  // ─── Helpers (normalized hidden folders) ──────────────
+  const normalizeHiddenFolders = useCallback((raw) => {
+    if (!raw) return {};
+    if (typeof raw === 'string') {
+      try {
+        raw = JSON.parse(raw);
+      } catch {
+        return {};
+      }
+    }
+    if (Array.isArray(raw)) {
+      const obj = {};
+      raw.forEach(p => { obj[p] = true; });
+      return obj;
+    }
+    if (typeof raw === 'object') return { ...raw };
+    return {};
+  }, []);
+
+  // ─── Permission recheck on resume (FIXED: was missing) ─
+  const recheckPermissionsOnResume = useCallback(async () => {
+    try {
+      const hasAccess = await checkAllFilesAccess();
+      if (!hasAccess) {
+        setUnlockedFolderPath(null);
+        setPendingFileSelection(null);
+      }
+    } catch (e) {
+      console.error('Permission recheck error:', e);
+    }
+  }, [checkAllFilesAccess]);
 
   // ─── AppState: recheck permissions on resume ──────────
   useEffect(() => {
@@ -139,24 +267,9 @@ const FileLockerScreen = ({ navigation }) => {
       }
     });
     return () => subscription?.remove();
-  }, []);
+  }, [recheckPermissionsOnResume]);
 
-  useEffect(() => {
-    const init = async () => {
-       
-
-      try {
-        await loadDirectory(ROOT_DIRECTORY);
-        
-      } catch (e) {
-        console.log("❌ INIT ERROR:", e);
-      }
-    };
-
-    init();
-  }, []);
-
-  // ─── App Init ─────────────────────────────────────────
+  // ─── App Init (FIXED: consolidated from two useEffects) ─
   useEffect(() => {
     const initializeApp = async () => {
       try {
@@ -164,6 +277,12 @@ const FileLockerScreen = ({ navigation }) => {
         if (!hasAccess) {
           setUnlockedFolderPath(null);
           setPendingFileSelection(null);
+          // Still attempt initial directory load for UI
+          try {
+            await loadDirectory(ROOT_DIRECTORY);
+          } catch (e) {
+            console.log("❌ INIT ERROR (no access):", e);
+          }
           return;
         }
 
@@ -174,18 +293,16 @@ const FileLockerScreen = ({ navigation }) => {
           AsyncStorage.getItem('originalLocations'),
         ]);
 
-        let parsedHidden = {};
-        if (storedHidden) {
-          parsedHidden = JSON.parse(storedHidden);
-          if (Array.isArray(parsedHidden)) {
-            const obj = {};
-            parsedHidden.forEach(p => (obj[p] = true));
-            parsedHidden = obj;
-          }
-        }
+        let parsedHidden = normalizeHiddenFolders(storedHidden);
 
         let parsedProtected = {};
-        if (protectedRes) parsedProtected = JSON.parse(protectedRes);
+        if (protectedRes) {
+          try {
+            parsedProtected = JSON.parse(protectedRes);
+          } catch {
+            parsedProtected = {};
+          }
+        }
 
         let needsUpdate = false;
         Object.keys(parsedProtected).forEach(p => {
@@ -199,61 +316,33 @@ const FileLockerScreen = ({ navigation }) => {
           await AsyncStorage.setItem('hiddenFolders', JSON.stringify(parsedHidden));
         }
 
-        await loadProtectedFiles();
-        await loadUsedPasswords();
-        await loadOriginalLocations();
-        await initializeHiddenDirectory();
-        await getStoragePaths();
+        await Promise.all([
+          loadProtectedFiles(),
+          loadUsedPasswords(),
+          loadOriginalLocations(),
+          initializeHiddenDirectory(),
+          getStoragePaths(),
+        ]);
+
         await loadDirectory(ROOT_DIRECTORY, null, parsedHidden, parsedProtected);
       } catch (e) {
         console.error('Initialization error:', e);
+        // Fallback: try basic directory load
+        try {
+          await loadDirectory(ROOT_DIRECTORY);
+        } catch (innerErr) {
+          console.log("❌ INIT FALLBACK ERROR:", innerErr);
+        }
       }
     };
     initializeApp();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ─── Focus: verify permission on screen focus ─────────
-  // useFocusEffect(
-  //   useCallback(() => {
-  //     const verifyPermission = async () => {
-  //       const granted = await checkAllFilesAccess();
-  //       if (!granted) {
-  //         setUnlockedFolderPath(null);
-  //         setPendingFileSelection(null);
-  //         return;
-  //       }
-
-  //       const storedHidden = await AsyncStorage.getItem('hiddenFolders');
-  //       let parsedHidden = {};
-  //       if (storedHidden) {
-  //         parsedHidden = JSON.parse(storedHidden);
-  //         if (Array.isArray(parsedHidden)) {
-  //           const obj = {};
-  //           parsedHidden.forEach(p => { obj[p] = true; });
-  //           parsedHidden = obj;
-  //         }
-  //       }
-
-  //       const storedProtected = await AsyncStorage.getItem('protectedFiles');
-  //       const parsedProtected = storedProtected ? JSON.parse(storedProtected) : {};
-
-  //       // ✅ ADD THESE 3 LINES — force reload all maps from AsyncStorage
-  //       await loadProtectedFiles();
-  //       await loadUsedPasswords();
-  //       await loadOriginalLocations();
-
-  //       setHiddenFolders(parsedHidden);
-  //       // loadDirectory(ROOTDIRECTORY, null, parsedHidden, parsedProtected);
-  //       loadDirectory(ROOT_DIRECTORY);
-  //     };
-
-  //     verifyPermission();
-  //   }, [])
-  // );
   useFocusEffect(
     useCallback(() => {
       const verifyPermission = async () => {
-
         // 🔒 Always lock vault when screen regains focus
         setVaultUnlocked(false);
 
@@ -265,178 +354,44 @@ const FileLockerScreen = ({ navigation }) => {
         }
 
         const storedHidden = await AsyncStorage.getItem('hiddenFolders');
-        let parsedHidden = {};
-        if (storedHidden) {
-          parsedHidden = JSON.parse(storedHidden);
-          if (Array.isArray(parsedHidden)) {
-            const obj = {};
-            parsedHidden.forEach(p => { obj[p] = true; });
-            parsedHidden = obj;
+        const parsedHidden = normalizeHiddenFolders(storedHidden);
+
+        const storedProtected = await AsyncStorage.getItem('protectedFiles');
+        let parsedProtected = {};
+        if (storedProtected) {
+          try {
+            parsedProtected = JSON.parse(storedProtected);
+          } catch {
+            parsedProtected = {};
           }
         }
 
-        const storedProtected = await AsyncStorage.getItem('protectedFiles');
-        const parsedProtected = storedProtected ? JSON.parse(storedProtected) : {};
-
         // Force reload all maps from AsyncStorage
-        await loadProtectedFiles();
-        await loadUsedPasswords();
-        await loadOriginalLocations();
+        await Promise.all([
+          loadProtectedFiles(),
+          loadUsedPasswords(),
+          loadOriginalLocations(),
+        ]);
 
         setHiddenFolders(parsedHidden);
         loadDirectory(ROOT_DIRECTORY);
       };
 
       verifyPermission();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
   );
 
-
-  // ─── Hardware back press ──────────────────────────────
-  // useEffect(() => {
-  //   const onBack = () => {
-  //     if (drawerOpen) { setDrawerOpen(false); return true; }
-  //     if (showStorageModal) { setShowStorageModal(false); return true; }
-
-  //     if (currentPath !== ROOT_DIRECTORY) {
-  //       const parentPath = getParentDirectory(currentPath);
-
-  //       if (unlockedFolderPath && currentPath.startsWith(unlockedFolderPath)) {
-  //         if (parentPath === ROOT_DIRECTORY || currentPath === unlockedFolderPath) {
-  //           const folderToHide = unlockedFolderPath;
-  //           const newHiddenFolders = { ...hiddenFolders, [folderToHide]: true };
-
-  //           AsyncStorage.setItem('hiddenFolders', JSON.stringify(newHiddenFolders));
-  //           setHiddenFolders(newHiddenFolders);
-  //           setUnlockedFolderPath(null);
-
-  //           // This call will now result in an EMPTY list because of step 1
-  //           loadDirectory(ROOT_DIRECTORY, null, newHiddenFolders, protectedFiles);
-  //           return true;
-  //         }
-  //       }
-
-  //       loadDirectory(parentPath, unlockedFolderPath, hiddenFolders, protectedFiles);
-  //       return true;
-  //     }
-
-  //     return false;
-  //   };
-
-  //   const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
-  //   return () => sub.remove();
-  // }, [drawerOpen, showStorageModal, currentPath, unlockedFolderPath, hiddenFolders, protectedFiles]);
-  useEffect(() => {
-    const onBack = () => {
-      if (drawerOpen) { setDrawerOpen(false); return true; }
-      if (showStorageModal) { setShowStorageModal(false); return true; }
-
-      if (currentPath !== ROOT_DIRECTORY) {
-        const parentPath = getParentDirectory(currentPath);
-
-        if (unlockedFolderPath && currentPath.startsWith(unlockedFolderPath)) {
-          if (parentPath === ROOT_DIRECTORY || currentPath === unlockedFolderPath) {
-            const folderToHide = unlockedFolderPath;
-            const newHiddenFolders = { ...hiddenFolders, [folderToHide]: true };
-
-            AsyncStorage.setItem('hiddenFolders', JSON.stringify(newHiddenFolders));
-            setHiddenFolders(newHiddenFolders);
-            setUnlockedFolderPath(null);
-
-            // 🔒 Lock vault when returning to root
-            setVaultUnlocked(false);
-
-            loadDirectory(ROOT_DIRECTORY, null, newHiddenFolders, protectedFiles);
-            return true;
-          }
-        }
-
-        loadDirectory(parentPath, unlockedFolderPath, hiddenFolders, protectedFiles);
-        return true;
-      }
-
-      return false;
-    };
-
-    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
-    return () => sub.remove();
-  }, [drawerOpen, showStorageModal, currentPath, unlockedFolderPath, hiddenFolders, protectedFiles]);
-
-  // ─── Drawer Animation ─────────────────────────────────
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(drawerOffset, {
-        toValue: drawerOpen ? 0 : -drawerWidth,
-        duration: 300,
-        useNativeDriver: true,
-        easing: Easing.inOut(Easing.ease),
-      }),
-      Animated.timing(overlayOpacity, {
-        toValue: drawerOpen ? 0.7 : 0,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [drawerOpen]);
-
-
-  const {
-    securityHidden: securityHideEnabled,
-    setSecurityHidden
-  } = useSecurityVisibility();
-
-  const {
-    chatHidden: chatHideEnabled,
-    setChatHidden
-  } = useChatVisibility();
-
-  // ─── Helpers ──────────────────────────────────────────
-  const showCustomAlert = (title, message) => {
-    setAlertTitle(title);
-    setAlertMessage(message);
-    setCustomAlertVisible(true);
-  };
-
-  const handleRefresh = () => {
-    setRefreshing(true);
-    loadDirectory(currentPath, unlockedFolderPath, hiddenFolders, protectedFiles);
-  };
-
-  // const handleBackPress = () => {
-  //   if (drawerOpen) { setDrawerOpen(false); return true; }
-  //   if (showStorageModal) { setShowStorageModal(false); return true; }
-
-  //   if (currentPath !== ROOT_DIRECTORY) {
-  //     const parentPath = getParentDirectory(currentPath);
-
-  //     // Leaving an unlocked protected folder
-  //     if (unlockedFolderPath && currentPath.startsWith(unlockedFolderPath)) {
-  //       if (parentPath === ROOT_DIRECTORY || currentPath === unlockedFolderPath) {
-  //         // ✅ Re-hide the folder immediately before loading
-  //         const folderToHide = unlockedFolderPath;
-  //         const newHiddenFolders = { ...hiddenFolders, [folderToHide]: true };
-
-  //         // ✅ Save + update state synchronously before loadDirectory
-  //         AsyncStorage.setItem('hiddenFolders', JSON.stringify(newHiddenFolders));
-  //         setHiddenFolders(newHiddenFolders);
-  //         setUnlockedFolderPath(null);
-
-  //         // ✅ Pass fresh hidden folders directly so loadDirectory doesn't use stale state
-  //         loadDirectory(ROOT_DIRECTORY, null, newHiddenFolders, protectedFiles);
-  //         return true;
-  //       }
-  //     }
-
-  //     loadDirectory(parentPath, unlockedFolderPath, hiddenFolders, protectedFiles);
-  //     return true;
-  //   }
-
-  //   return false;
-  // };
-
-  const handleBackPress = () => {
-    if (drawerOpen) { setDrawerOpen(false); return true; }
-    if (showStorageModal) { setShowStorageModal(false); return true; }
+  // ─── Unified Back Navigation Logic (FIXED: single source of truth) ─
+  const handleNavigateBack = useCallback(() => {
+    if (drawerOpen) {
+      closeDrawer();
+      return true;
+    }
+    if (showStorageModal) {
+      setShowStorageModal(false);
+      return true;
+    }
 
     if (currentPath !== ROOT_DIRECTORY) {
       const parentPath = getParentDirectory(currentPath);
@@ -463,11 +418,35 @@ const FileLockerScreen = ({ navigation }) => {
     }
 
     return false;
-  };
-  const toggleFolderVisibility = async (folderPath) => {
-    const currentHidden = Array.isArray(hiddenFolders)
-      ? Object.fromEntries(hiddenFolders.map(p => [p, true]))
-      : { ...hiddenFolders };
+  }, [
+    drawerOpen, closeDrawer, showStorageModal, currentPath,
+    unlockedFolderPath, hiddenFolders, protectedFiles,
+    setHiddenFolders, loadDirectory, setVaultUnlocked
+  ]);
+
+  // ─── Hardware back press (FIXED: uses unified handler) ─
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', handleNavigateBack);
+    return () => sub.remove();
+  }, [handleNavigateBack]);
+
+  // ─── Helpers ──────────────────────────────────────────
+  const showCustomAlert = useCallback((title, message) => {
+    setAlertTitle(title);
+    setAlertMessage(message);
+    setCustomAlertVisible(true);
+  }, []);
+
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadDirectory(currentPath, unlockedFolderPath, hiddenFolders, protectedFiles);
+  }, [currentPath, unlockedFolderPath, hiddenFolders, protectedFiles, setRefreshing, loadDirectory]);
+
+  // Kept for external reference compatibility (uses unified handler)
+  const handleBackPress = handleNavigateBack;
+
+  const toggleFolderVisibility = useCallback(async (folderPath) => {
+    const currentHidden = normalizeHiddenFolders(hiddenFolders);
     if (currentHidden[folderPath]) {
       delete currentHidden[folderPath];
     } else {
@@ -475,16 +454,16 @@ const FileLockerScreen = ({ navigation }) => {
     }
     await saveHiddenFolders(currentHidden);
     loadDirectory(currentPath, unlockedFolderPath, currentHidden, protectedFiles);
-  };
+  }, [hiddenFolders, normalizeHiddenFolders, saveHiddenFolders, loadDirectory, currentPath, unlockedFolderPath, protectedFiles]);
 
-  const updateMediaStore = async (filePath) => {
+  const updateMediaStore = useCallback(async (filePath) => {
     if (Platform.OS === 'android') {
       try {
         const { MediaScanner } = require('react-native-media-scanner');
         await MediaScanner.scanFile(filePath);
       } catch { }
     }
-  };
+  }, []);
 
   // ─── File Navigation ──────────────────────────────────
   const handleFilePress = (item) => {
@@ -563,6 +542,7 @@ const FileLockerScreen = ({ navigation }) => {
       onSave: async () => true,
     });
   };
+
 
   // ─── Password Actions ─────────────────────────────────
   const handlePasswordSubmit = async () => {
@@ -656,6 +636,7 @@ const FileLockerScreen = ({ navigation }) => {
 
         if (currentFileForPassword.isDirectory) {
           setUnlockedFolderPath(hiddenPath);
+          setVaultUnlocked(true);
           const newHiddenFolders = { ...hiddenFolders };
           if (newHiddenFolders[hiddenPath]) {
             delete newHiddenFolders[hiddenPath];
@@ -674,147 +655,7 @@ const FileLockerScreen = ({ navigation }) => {
     }
   };
 
-  // temp code for testing
-  // const handleGlobalPasswordSubmit = async () => {
 
-  //   if (!globalPassword) {
-  //     Alert.alert('Error', 'Please enter password');
-  //     return;
-  //   }
-
-  //   try {
-  //     setProcessing(true);
-
-  //     /* ===============================
-  //        🔐 SECURITY PIN CHECK
-  //     =============================== */
-
-  //     const securityResult = await verifyPin(
-  //       SECURITY_HIDE_SERVICE,
-  //       globalPassword
-  //     );
-
-  //     const chatHideResult = await verifyPin(
-  //       CHAT_HIDE_SERVICE,
-  //       globalPassword
-  //     );
-
-  //     if (securityResult?.success === true) {
-  //       setProcessing(false);
-  //       setGlobalPassword('');
-  //       navigation.navigate('Security');
-  //       return;
-  //     }
-
-  //     if (chatHideResult?.success === true) {
-  //       setProcessing(false);
-  //       setGlobalPassword('');
-  //       navigation.navigate('Chat');
-  //       return;
-  //     }
-
-  //     /* ===============================
-  //        ✅ LOAD LATEST DATA
-  //     =============================== */
-
-  //     const rawProtected = await AsyncStorage.getItem('protectedFiles');
-  //     const latestProtected = rawProtected ? JSON.parse(rawProtected) : {};
-
-  //     const inputHash = hashPassword(globalPassword);
-
-  //     console.log("🔍 DEBUG protectedFiles:", latestProtected);
-  //     console.log("🔍 DEBUG inputHash:", inputHash);
-
-  //     /* ===============================
-  //        🔍 FIND MATCHED PATH
-  //     =============================== */
-
-  //     const matchedPath = Object.keys(latestProtected).find(
-  //       path => latestProtected[path] === inputHash
-  //     );
-
-  //     if (!matchedPath) {
-  //       setProcessing(false);
-  //       Alert.alert('Error', 'No file or folder matches this password');
-  //       setGlobalPassword('');
-  //       return;
-  //     }
-
-  //     /* ===============================
-  //        📁 CHECK FILE EXISTS
-  //     =============================== */
-
-  //     const exists = await RNFS.exists(matchedPath);
-
-  //     if (!exists) {
-  //       setProcessing(false);
-  //       Alert.alert('Not Found', 'The file or folder was deleted.');
-  //       setGlobalPassword('');
-  //       return;
-  //     }
-
-  //     const stat = await RNFS.stat(matchedPath);
-
-  //     setProcessing(false);
-
-  //     /* ===============================
-  //        📂 FOLDER OPEN (DIRECT)
-  //     =============================== */
-
-  //     if (stat.isDirectory()) {
-
-  //       console.log("🚀 Opening folder:", matchedPath);
-
-  //       // ✅ Set unlocked path
-  //       setUnlockedFolderPath(matchedPath);
-
-  //       // ✅ Direct load (NO hidden logic)
-  //       await loadDirectory(
-  //         matchedPath,
-  //         matchedPath,
-  //         {}, // empty hidden
-  //         latestProtected
-  //       );
-
-  //       console.log("✅ Folder opened successfully");
-
-  //       setGlobalPassword('');
-
-  //     } else {
-
-  //       /* ===============================
-  //          📄 FILE OPEN
-  //       =============================== */
-
-  //       const fName = matchedPath.split('/').pop();
-  //       const tempPath = `${RNFS.CachesDirectoryPath}/${fName}`;
-
-  //       await decryptFile(
-  //         matchedPath,
-  //         tempPath,
-  //         globalPassword
-  //       );
-
-  //       openFile({
-  //         path: tempPath,
-  //         name: fName,
-  //         isDirectory: false,
-  //         type: getFileType(fName),
-  //       });
-
-  //       setGlobalPassword('');
-  //     }
-
-  //   } catch (err) {
-
-  //     console.log("❌ GLOBAL UNLOCK ERROR:", err);
-
-  //     setProcessing(false);
-  //     setGlobalPassword('');
-
-  //     Alert.alert('Error', 'Failed to unlock');
-  //   }
-  // };
   const handleGlobalPasswordSubmit = async () => {
     if (!globalPassword) {
       Alert.alert('Error', 'Please enter password');
@@ -933,158 +774,6 @@ const FileLockerScreen = ({ navigation }) => {
       Alert.alert('Error', 'Failed to unlock');
     }
   };
-  //working code
-  // const handleGlobalPasswordSubmit = async () => {
-
-  //   if (!globalPassword) {
-  //     Alert.alert('Error', 'Please enter password');
-  //     return;
-  //   }
-  //   console.log('=== GLOBAL PASSWORD SUBMIT ===');
-  //   console.log('Input value:', globalPassword);
-  //   console.log('protectedFiles in STATE:', JSON.stringify(protectedFiles));
-
-  //   const raw = await AsyncStorage.getItem('protectedFiles');
-  //   console.log('protectedFiles in ASYNCSTORAGE:', raw);
-
-  //   const rawHidden = await AsyncStorage.getItem('hiddenFolders');
-  //   console.log('hiddenFolders in ASYNCSTORAGE:', rawHidden);
-  //   try {
-
-  //     setProcessing(true);
-
-  //     /* ---------------- SECURITY PIN CHECK ---------------- */
-
-  //     const securityResult = await verifyPin(
-  //       SECURITY_HIDE_SERVICE,
-  //       globalPassword
-  //     );
-
-  //     const chatHideResult = await verifyPin(
-  //       CHAT_HIDE_SERVICE,
-  //       globalPassword
-  //     );
-
-
-
-  //     // ✅ use for  navigates directly to Security screen
-  //     // ✅ Just replace this block
-  //     if (securityResult?.success === true) {
-  //       setProcessing(false);
-  //       setGlobalPassword('');
-  //       navigation.navigate('Security');  // directly navigate, no state change
-  //       return;
-  //     }
-
-  //     if (chatHideResult?.success === true) {
-  //       setProcessing(false);
-  //       setGlobalPassword('');
-  //       navigation.navigate('Chat');  // directly navigate, no state change
-  //       return;
-  //     }
-
-
-
-
-  //     /* ---------------- FOLDER PASSWORD CHECK ---------------- */
-
-  //     const inputHash = hashPassword(globalPassword);
-
-  //     const matchedPath = Object.keys(protectedFiles).find(
-  //       path => protectedFiles[path] === inputHash
-  //     );
-
-  //     if (!matchedPath) {
-
-  //       setProcessing(false);
-
-  //       Alert.alert(
-  //         'Error',
-  //         'No file or folder matches this password'
-  //       );
-
-  //       setGlobalPassword('');
-  //       return;
-  //     }
-
-  //     const exists = await RNFS.exists(matchedPath);
-
-  //     if (!exists) {
-
-  //       const pf = { ...protectedFiles };
-  //       delete pf[matchedPath];
-
-  //       await saveProtectedFiles(pf);
-
-  //       setProcessing(false);
-
-  //       Alert.alert(
-  //         'Not Found',
-  //         'The file or folder was deleted.'
-  //       );
-
-  //       setGlobalPassword('');
-  //       return;
-  //     }
-
-  //     const stat = await RNFS.stat(matchedPath);
-
-  //     setProcessing(false);
-
-  //     /* ---------------- OPEN FOLDER OR FILE ---------------- */
-
-  //     if (stat.isDirectory()) {
-
-  //       setGlobalPassword('');
-
-  //       setUnlockedFolderPath(matchedPath);
-
-  //       const newHiddenFolders = { ...hiddenFolders };
-
-  //       if (newHiddenFolders[matchedPath]) {
-  //         delete newHiddenFolders[matchedPath];
-  //         await saveHiddenFolders(newHiddenFolders);
-  //       }
-
-  //       await loadDirectory(
-  //         matchedPath,
-  //         matchedPath,
-  //         newHiddenFolders,
-  //         protectedFiles
-  //       );
-
-  //     } else {
-
-  //       const fName = matchedPath.split('/').pop();
-
-  //       const tempPath = `${RNFS.CachesDirectoryPath}/${fName}`;
-
-  //       await decryptFile(
-  //         matchedPath,
-  //         tempPath,
-  //         globalPassword
-  //       );
-
-  //       openFile({
-  //         path: tempPath,
-  //         name: fName,
-  //         isDirectory: false,
-  //         type: getFileType(fName),
-  //       });
-
-  //       setGlobalPassword('');
-  //     }
-
-  //   } catch (err) {
-
-  //     setProcessing(false);
-
-  //     Alert.alert('Error', 'Failed to unlock');
-
-  //     setGlobalPassword('');
-  //   }
-
-  // };
 
   const handleOverlayPasswordSubmit = () => {
     if (!overlayPassword) { Alert.alert('Error', 'Please enter password'); return; }
@@ -1097,6 +786,7 @@ const FileLockerScreen = ({ navigation }) => {
       setOverlayPassword('');
     }
   };
+
 
   const removePasswordProtection = async (filePath, password) => {
     if (protectedFiles[filePath] !== hashPassword(password)) {
@@ -1168,6 +858,7 @@ const FileLockerScreen = ({ navigation }) => {
       return false;
     }
   };
+
 
   // ─── File Creation ────────────────────────────────────
   const handleCreateFile = async () => {
@@ -1258,7 +949,7 @@ const FileLockerScreen = ({ navigation }) => {
   };
 
   // ─── Storage & Browser ────────────────────────────────
-  const handleBrowsePress = async () => {
+  const handleBrowsePress = useCallback(async () => {
     try {
       const granted = await requestStoragePermission();
       if (granted) {
@@ -1270,7 +961,7 @@ const FileLockerScreen = ({ navigation }) => {
     } catch (err) {
       Alert.alert('Error', 'Permission request failed: ' + err.message);
     }
-  };
+  }, [requestStoragePermission]);
 
   const handleUploadFile = async () => {
     try {
@@ -1354,6 +1045,7 @@ const FileLockerScreen = ({ navigation }) => {
     }
   };
 
+
   // ─── Browser File Selection ───────────────────────────
   const handleFileSelectInBrowser = async (item) => {
     if (browserMode === 'restoreUnlocked') {
@@ -1386,50 +1078,6 @@ const FileLockerScreen = ({ navigation }) => {
       }
       return;
     }
-
-    // file code will move file orginal path to the locked path
-    // if (browserMode === 'upload') {
-    //   if (item.isDirectory) { Alert.alert('Select File', 'Please select a file, not a folder.'); return; }
-    //   setFileBrowserVisible(false);
-    //   try {
-    //     const destPath = `${unlockedFolderPath}/${item.name}`;
-    //     let finalDestPath = destPath;
-    //     if (await RNFS.exists(destPath)) {
-    //       const dot = item.name.lastIndexOf('.');
-    //       finalDestPath = dot !== -1
-    //         ? `${unlockedFolderPath}/${item.name.slice(0, dot)}_copy${item.name.slice(dot)}`
-    //         : `${unlockedFolderPath}/${item.name}_copy`;
-    //     }
-    //     setUploading(true);
-    //     setUploadProgress(0);
-    //     setUploadStage('encrypting');
-    //     const source = axios.CancelToken.source();
-    //     setCancelSource(source);
-    //     try {
-    //       await new Promise(r => setTimeout(r, 400));
-    //       setUploadStage('uploading');
-    //       await RNFS.moveFile(item.path, finalDestPath);
-    //       const folderName = unlockedFolderPath.split('/').pop();
-    //       const res = await fileManager.uploadLockedFolderFile(
-    //         folderName, item.name, finalDestPath,
-    //         (p) => setUploadProgress(p), source.token
-    //       );
-    //       if (res?.canceled) return;
-    //       if (!res?.success) Alert.alert('Upload Failed');
-    //       handleRefresh();
-    //     } catch (e) {
-    //       Alert.alert('Error', e.message);
-    //     } finally {
-    //       setUploading(false);
-    //       setCancelSource(null);
-    //     }
-    //     Alert.alert('Success', `${item.name} secured successfully.`);
-    //     handleRefresh();
-    //   } catch (err) {
-    //     Alert.alert('Error', 'Failed to move file: ' + err.message);
-    //   }
-    //   return;
-    // }
 
     if (browserMode === 'upload') {
       if (item.isDirectory) {
@@ -1608,12 +1256,13 @@ const FileLockerScreen = ({ navigation }) => {
     }
   };
 
+
   // ─── Long Press (Unlocked folder) ────────────────────
-  const handleUnlockedFileLongPress = (item) => {
+  const handleUnlockedFileLongPress = useCallback((item) => {
     if (!unlockedFolderPath || item.isDirectory || item.name === '..') return;
     setSelectedFileForOptions(item);
     setFileOptionsModalVisible(true);
-  };
+  }, [unlockedFolderPath]);
 
   const handleRestoreUnlockedFile = async () => {
     const item = selectedFileForOptions;
@@ -1698,77 +1347,165 @@ const FileLockerScreen = ({ navigation }) => {
     ]);
   };
 
-  const cancelUpload = () => {
+
+  const cancelUpload = useCallback(() => {
     if (cancelSource) cancelSource.cancel('User canceled Encryption');
     setUploading(false);
-  };
+  }, [cancelSource]);
+
+  // ─── Modal Dismiss Handlers (memoized) ────────────────
+  const handlePasswordModalCancel = useCallback(() => {
+    setPasswordModalVisible(false);
+  }, []);
+
+  const handlePasswordModalRestore = useCallback(() => {
+    setRestoreTargetFile(currentFileForPassword);
+    setBrowserMode('restore');
+    setBrowserPath(ROOT_DIRECTORY);
+    setFileBrowserVisible(true);
+  }, [currentFileForPassword]);
+
+  const handlePasswordModalRemove = useCallback(async () => {
+    if (!passwordInput) return;
+    const ok = await removePasswordProtection(currentFileForPassword?.path, passwordInput);
+    if (ok) setPasswordModalVisible(false);
+  }, [passwordInput, currentFileForPassword]);
+
+  const handleStorageModalClose = useCallback(() => {
+    setShowStorageModal(false);
+  }, []);
+
+  const handleFileCreateModalCancel = useCallback(() => {
+    setFileModalVisible(false);
+    setFileName('');
+    setFileContent('');
+  }, []);
+
+  const handleGalleryModalClose = useCallback(() => {
+    setGalleryModalVisible(false);
+  }, []);
+
+  const handleGalleryOpen = useCallback((item) => {
+    openFile({ path: item.path, name: item.name, type: 'image' });
+  }, []);
+
+  const handleFileBrowserClose = useCallback(() => {
+    setFileBrowserVisible(false);
+  }, []);
+
+  const handleFileOptionsCancel = useCallback(() => {
+    setFileOptionsModalVisible(false);
+    setSelectedFileForOptions(null);
+  }, []);
+
+  const handleNewFolderBack = useCallback(() => {
+    if (newFolderStep === 2) {
+      setNewFolderStep(1);
+    } else {
+      setNewFolderName('');
+      setNewFolderPassword('');
+      setNewFolderConfirmPassword('');
+      setNewFolderStep(1);
+      setNewFolderModalVisible(false);
+    }
+  }, [newFolderStep]);
+
+  const handleNewFolderCancel = useCallback(() => {
+    setNewFolderName('');
+    setNewFolderPassword('');
+    setNewFolderConfirmPassword('');
+    setNewFolderStep(1);
+    setNewFolderModalVisible(false);
+  }, []);
+
+  const handleOverlayCancel = useCallback(() => {
+    setShowPasswordOverlay(false);
+  }, []);
+
+  const handleAlertDismiss = useCallback(() => {
+    setCustomAlertVisible(false);
+  }, []);
+
+  const handleOpenNewFolder = useCallback(() => {
+    setNewFolderStep(1);
+    setNewFolderModalVisible(true);
+  }, []);
 
   // ─── Render File Item ─────────────────────────────────
-  const renderFileItem = ({ item }) => (
+  const renderFileItem = useCallback(({ item }) => (
     <TouchableOpacity
       style={styles.fileItem}
       onPress={() => handleFilePress(item)}
-      onLongPress={() => {
-        if (item.name === '..') return;
-        if (unlockedFolderPath && !item.isDirectory) {
-          handleUnlockedFileLongPress(item);
-          return;
-        }
-        if (item.isDirectory) {
-          Alert.alert('Folder Options', `Choose an action for "${item.name}"`, [
-            {
-              text: hiddenFolders[item.path] ? 'Unhide' : 'Hide',
-              onPress: () => toggleFolderVisibility(item.path),
-            },
-            { text: 'Cancel', style: 'cancel' },
-          ]);
-        }
-      }}
+      onLongPress={() => handleUnlockedFileLongPress(item)}
+      activeOpacity={0.7}
     >
       <Icon
-        name={getFileIcon(item.type)}
+        name={item.isDirectory ? 'folder' : getFileIcon(item.name)}
         size={28}
-        color={getFileIconColor(item.type)}
-        style={styles.fileIcon}
+        color={item.isDirectory ? '#FFD700' : getFileIconColor(item.name)}
       />
-      <View style={styles.fileInfo}>
-        <View style={styles.fileNameContainer}>
-          <Text style={styles.fileName} numberOfLines={1}>{item.name}</Text>
-          {protectedFiles[item.path] && unlockedFolderPath !== item.path && (
-            <Icon name="lock" size={14} color="#F44336" style={styles.lockIcon} />
-          )}
-          {hiddenFolders[item.path] && (
-            <Icon name="visibility-off" size={14} color="#9E9E9E" style={styles.lockIcon} />
-          )}
-        </View>
-        {!item.isDirectory && (
-          <Text style={styles.fileMeta}>{item.size}</Text>
-        )}
-      </View>
-      {item.isDirectory && (
-        <Icon name="chevron-right" size={20} color="#666" />
-      )}
+      <Text style={styles.fileName} numberOfLines={1} ellipsizeMode="tail">
+        {item.name}
+      </Text>
     </TouchableOpacity>
-  );
+  ), [handleFilePress, handleUnlockedFileLongPress]);
+  // ─── FlatList key extractor (memoized) ────────────────
+  const keyExtractor = useCallback((item) => item.path, []);
+
+  // ─── FlatList data ────────────────────────────────────
+  const flatListData = useMemo(() => {
+    if (!Array.isArray(displayFiles) || displayFiles.length === 0) return [];
+    return vaultUnlocked ? displayFiles : [];
+  }, [displayFiles, vaultUnlocked]);
 
   // ─── RENDER ───────────────────────────────────────────
   return (
     <View style={styles.container}>
+      {/* Ensure content respects system bars */}
+      <StatusBar
+        translucent={false}
+        backgroundColor="#1a1a2e"
+        barStyle="light-content"
+      />
 
-      {/* Drawer Overlay */}
-      {drawerOpen && (
-        <TouchableWithoutFeedback onPress={() => setDrawerOpen(false)}>
-          <Animated.View style={[styles.drawerOverlay, { opacity: overlayOpacity }]} />
+      {/* Drawer Overlay (FIXED: only rendered when needed) */}
+      {(drawerOpen || drawerMounted.current) && (
+        <TouchableWithoutFeedback onPress={closeDrawer}>
+          <Animated.View
+            style={[
+              styles.drawerOverlay,
+              {
+                opacity: overlayOpacity,
+                // Ensure overlay doesn't block when fully transparent
+                pointerEvents: drawerOpen ? 'auto' : 'none',
+              }
+            ]}
+          />
         </TouchableWithoutFeedback>
       )}
 
-      {/* Drawer */}
-      <Animated.View style={[styles.drawerContainer, { width: drawerWidth, transform: [{ translateX: drawerOffset }] }]}>
-        <CustomDrawerContent navigation={navigation} onClose={() => setDrawerOpen(false)} />
-      </Animated.View>
+      {/* Drawer (FIXED: proper lifecycle, prevents hanging) */}
+      {(drawerOpen || drawerMounted.current) && (
+        <Animated.View
+          style={[
+            styles.drawerContainer,
+            {
+              width: drawerWidth,
+              transform: [{ translateX: drawerOffset }],
+            }
+          ]}
+        >
+          <SafeAreaView style={{ flex: 1 }}>
+            <CustomDrawerContent
+              navigation={navigation}
+              onClose={closeDrawer}
+            />
+          </SafeAreaView>
+        </Animated.View>
+      )}
 
       {/* Menu Button */}
-      <TouchableOpacity onPress={() => setDrawerOpen(true)} style={styles.menuButton}>
+      <TouchableOpacity onPress={openDrawer} style={styles.menuButton}>
         <Icon name="menu" size={24} color="#fff" />
       </TouchableOpacity>
 
@@ -1787,6 +1524,8 @@ const FileLockerScreen = ({ navigation }) => {
                 value={globalPassword}
                 onChangeText={setGlobalPassword}
                 secureTextEntry={false}
+                autoCorrect={false}
+                autoCapitalize="none"
               />
             </View>
             <TouchableOpacity style={styles.button} onPress={handleGlobalPasswordSubmit}>
@@ -1814,19 +1553,22 @@ const FileLockerScreen = ({ navigation }) => {
             />
           )} */}
 
-          {!Array.isArray(displayFiles) || displayFiles.length === 0 ? (
+          {flatListData.length === 0 ? (
             <View style={styles.emptyContainer}>
               <Icon name="folder-open" size={60} color="#333" />
               <Text style={styles.emptyText}>No folders found</Text>
             </View>
           ) : (
             <FlatList
-              data={vaultUnlocked ? displayFiles : []}
-              keyExtractor={(item) => item.path}
+              data={flatListData}
+              keyExtractor={keyExtractor}
               renderItem={renderFileItem}
-              contentContainerStyle={{ paddingBottom: 100 }}
+              contentContainerStyle={flatListContentStyle}
               refreshing={refreshing}
               onRefresh={handleRefresh}
+              removeClippedSubviews={true}
+              maxToRenderPerBatch={15}
+              windowSize={10}
             />
           )}
 
@@ -1842,19 +1584,16 @@ const FileLockerScreen = ({ navigation }) => {
         />
       )}
 
-
       {/* ── View to display button New Folder / Upload file and Browser File  ── */}
-      <View style={styles.bottomSection}>
+      <View style={[styles.bottomSection, bottomSectionSafeStyle]}>
         <View style={styles.bottomButtonContainer}>
 
           {/* 1) ROOT (default) → only New Folder */}
           {isAtRoot && !isInsideUnlockedFolder && (
             <TouchableOpacity
-              style={[styles.bottomButton]}
-              onPress={() => {
-                setNewFolderStep(1);
-                setNewFolderModalVisible(true);
-              }}
+              style={styles.bottomButton}
+              onPress={handleOpenNewFolder}
+              activeOpacity={0.7}
             >
               <Icon name="create-new-folder" size={20} color="#fff" />
               <Text style={styles.bottomButtonText}>New Folder</Text>
@@ -1875,6 +1614,7 @@ const FileLockerScreen = ({ navigation }) => {
               <TouchableOpacity
                 style={[styles.bottomButton, styles.fileButton]}
                 onPress={handleUploadFile}
+                activeOpacity={0.7}
               >
                 <Icon name="upload-file" size={20} color="#fff" />
                 <Text style={styles.bottomButtonText}>Upload File</Text>
@@ -1896,24 +1636,15 @@ const FileLockerScreen = ({ navigation }) => {
         protectedFiles={protectedFiles}
         onChangePassword={setPasswordInput}
         onChangeConfirm={setConfirmPassword}
-        onCancel={() => setPasswordModalVisible(false)}
+        onCancel={handlePasswordModalCancel}
         onSubmit={handlePasswordSubmit}
-        onRestore={() => {
-          setRestoreTargetFile(currentFileForPassword);
-          setBrowserMode('restore');
-          setBrowserPath(ROOT_DIRECTORY);
-          setFileBrowserVisible(true);
-        }}
-        onRemovePassword={async () => {
-          if (!passwordInput) return;
-          const ok = await removePasswordProtection(currentFileForPassword.path, passwordInput);
-          if (ok) setPasswordModalVisible(false);
-        }}
+        onRestore={handlePasswordModalRestore}
+        onRemovePassword={handlePasswordModalRemove}
       />
 
       <StorageModal
         visible={showStorageModal}
-        onClose={() => setShowStorageModal(false)}
+        onClose={handleStorageModalClose}
         onSelect={handleStorageSelect}
       />
 
@@ -1923,22 +1654,22 @@ const FileLockerScreen = ({ navigation }) => {
         fileContent={fileContent}
         onChangeName={setFileName}
         onChangeContent={setFileContent}
-        onCancel={() => { setFileModalVisible(false); setFileName(''); setFileContent(''); }}
+        onCancel={handleFileCreateModalCancel}
         onCreate={handleCreateFile}
       />
 
       <GalleryModal
         visible={galleryModalVisible}
         images={galleryImages}
-        onClose={() => setGalleryModalVisible(false)}
-        onOpen={(item) => openFile({ path: item.path, name: item.name, type: 'image' })}
+        onClose={handleGalleryModalClose}
+        onOpen={handleGalleryOpen}
       />
 
       <FileBrowser
         visible={fileBrowserVisible}
         basePath={browserPath}
         onSelect={handleFileSelectInBrowser}
-        onClose={() => setFileBrowserVisible(false)}
+        onClose={handleFileBrowserClose}
         mode={browserMode}
       />
 
@@ -1947,7 +1678,7 @@ const FileLockerScreen = ({ navigation }) => {
         file={selectedFileForOptions}
         onRestore={handleRestoreUnlockedFile}
         onDelete={handleDeleteUnlockedFile}
-        onCancel={() => { setFileOptionsModalVisible(false); setSelectedFileForOptions(null); }}
+        onCancel={handleFileOptionsCancel}
       />
 
       <NewFolderModal
@@ -1960,11 +1691,8 @@ const FileLockerScreen = ({ navigation }) => {
         onChangePassword={setNewFolderPassword}
         onChangeConfirm={setNewFolderConfirmPassword}
         onNext={handleCreateFolder}
-        onBack={() => {
-          if (newFolderStep === 2) { setNewFolderStep(1); }
-          else { setNewFolderName(''); setNewFolderPassword(''); setNewFolderConfirmPassword(''); setNewFolderStep(1); setNewFolderModalVisible(false); }
-        }}
-        onCancel={() => { setNewFolderName(''); setNewFolderPassword(''); setNewFolderConfirmPassword(''); setNewFolderStep(1); setNewFolderModalVisible(false); }}
+        onBack={handleNewFolderBack}
+        onCancel={handleNewFolderCancel}
       />
 
       {/* Password Overlay (file access) */}
@@ -1980,12 +1708,22 @@ const FileLockerScreen = ({ navigation }) => {
               value={overlayPassword}
               onChangeText={setOverlayPassword}
               secureTextEntry
+              autoCorrect={false}
+              autoCapitalize="none"
             />
             <View style={styles.overlayButtons}>
-              <TouchableOpacity style={[styles.overlayButton, styles.overlayCancelButton]} onPress={() => setShowPasswordOverlay(false)}>
+              <TouchableOpacity
+                style={[styles.overlayButton, styles.overlayCancelButton]}
+                onPress={handleOverlayCancel}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.overlayButtonText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.overlayButton, styles.overlaySubmitButton]} onPress={handleOverlayPasswordSubmit}>
+              <TouchableOpacity
+                style={[styles.overlayButton, styles.overlaySubmitButton]}
+                onPress={handleOverlayPasswordSubmit}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.overlayButtonText}>Submit</Text>
               </TouchableOpacity>
             </View>
@@ -1999,7 +1737,11 @@ const FileLockerScreen = ({ navigation }) => {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>{alertTitle}</Text>
             <Text style={styles.alertMessage}>{alertMessage}</Text>
-            <TouchableOpacity style={[styles.modalButton, styles.confirmButton]} onPress={() => setCustomAlertVisible(false)}>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.confirmButton]}
+              onPress={handleAlertDismiss}
+              activeOpacity={0.7}
+            >
               <Text style={styles.confirmButtonText}>OK</Text>
             </TouchableOpacity>
           </View>
@@ -2016,9 +1758,12 @@ const FileLockerScreen = ({ navigation }) => {
         </View>
       )}
 
-
     </View>
   );
 };
 
-export default FileLockerScreen;
+// ─── Static Styles (outside component to prevent re-creation) ─
+const flatListContentStyle = { paddingBottom: 100 };
+const bottomSectionSafeStyle = { paddingBottom: Platform.OS === 'android' ? 8 : 0 };
+
+export default React.memo(FileLockerScreen);

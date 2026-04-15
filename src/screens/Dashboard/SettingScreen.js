@@ -5,7 +5,13 @@
  * Style helpers imported from SettingStyles.js (updated version).
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  memo,
+} from 'react';
 import {
   View,
   Text,
@@ -21,6 +27,7 @@ import {
   Vibration,
   StyleSheet,
   Platform,
+  StatusBar,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -48,16 +55,249 @@ export const LOGIN_AUTH_SERVICE = 'shield-passcode';
 // ── PIN mode type ─────────────────────────────────────────────────────────────
 /** @typedef {'chat' | 'security' | 'login'} PinMode */
 
+// ── Static maps (defined outside component — never recreated on render) ───────
+const PIN_SERVICE_MAP = {
+  chat:     CHAT_HIDE_SERVICE,
+  security: SECURITY_HIDE_SERVICE,
+  login:    LOGIN_AUTH_SERVICE,
+};
+
+const PIN_LABEL_MAP = {
+  chat:     'Connect PIN',
+  security: 'Security PIN',
+  login:    'Login PIN',
+};
+
+const PIN_NAV_HINT_MAP = {
+  chat:     'Security Settings → Connect Hide',
+  security: 'Security Settings → Security Hide',
+  login:    'Security Settings',
+};
+
+const PIN_TITLE_MAP = (securityOn, chatOn) => ({
+  security: `Security — Turn ${securityOn ? 'OFF' : 'ON'}`,
+  chat:     `Chat — Turn ${chatOn ? 'OFF' : 'ON'}`,
+  login:    'Confirm Login PIN',
+});
+
+const PIN_DESC_MAP = {
+  security: 'Enter your 6-digit Security Hide PIN to confirm.',
+  chat:     'Enter your 6-digit Chat Hide PIN to confirm.',
+  login:    'Enter your Login PIN to change App Icon visibility.',
+};
+
 // ═════════════════════════════════════════════════════════════════════════════
-// COMPONENT
+// SUB-COMPONENTS
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Reusable toggle row card.
+ * Extracted to a stable `memo` component so it is not recreated on every
+ * parent render — previously defined as an inline render function which
+ * bypasses React's reconciler optimisations.
+ */
+const ToggleCard = memo(({
+  iconName,
+  iconColor,
+  title,
+  subtitle,
+  isEnabled,
+  onToggle,
+}) => (
+  <TouchableOpacity
+    style={styles.securityCard}
+    onPress={onToggle}
+    activeOpacity={0.85}
+    accessibilityRole="switch"
+    accessibilityState={{ checked: isEnabled }}
+    accessibilityLabel={`${title} toggle, currently ${isEnabled ? 'on' : 'off'}`}
+  >
+    <Icon name={iconName} size={26} color={iconColor} />
+    <View style={styles.securityText}>
+      <View style={localStyles.cardTextBlock}>
+        <Text style={styles.securityTitle}>{title}</Text>
+        {subtitle ? (
+          <Text style={localStyles.subtitle}>{subtitle}</Text>
+        ) : null}
+      </View>
+      <View style={styles.toggleContainer}>
+        <Text style={styles.toggleText}>{isEnabled ? 'ON' : 'OFF'}</Text>
+        <View style={[styles.toggleSwitch, isEnabled ? styles.toggleOn : styles.toggleOff]}>
+          <View style={[styles.toggleKnob, isEnabled ? styles.knobOn : styles.knobOff]} />
+        </View>
+      </View>
+    </View>
+  </TouchableOpacity>
+));
+
+/**
+ * PIN entry modal.
+ * Extracted to a stable `memo` component with all required values passed as
+ * props. This eliminates the stale-ref read (`pinModeRef.current` during render)
+ * that existed in the original inline `renderPinModal` function.
+ */
+const PinModal = memo(({
+  visible,
+  mode,
+  pinValue,
+  pinError,
+  pinShakeAnim,
+  securityHideEnabled,
+  chatHideEnabled,
+  onKeyPress,
+  onConfirm,
+  onClose,
+  onForgotPin,
+}) => {
+  const titleMap = PIN_TITLE_MAP(securityHideEnabled, chatHideEnabled);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent   // ensures modal covers status bar on Android
+    >
+      <TouchableWithoutFeedback onPress={onClose}>
+        <View style={pinModalStyles.overlay}>
+          {/* Inner press does NOT propagate to TouchableWithoutFeedback */}
+          <TouchableWithoutFeedback onPress={() => {}}>
+            <Animated.View
+              style={[
+                pinModalStyles.container,
+                { transform: [{ translateX: pinShakeAnim }] },
+              ]}
+            >
+              {/* Title */}
+              <Text style={pinModalStyles.title}>
+                {titleMap[mode] ?? 'Enter PIN'}
+              </Text>
+
+              {/* Description */}
+              <Text style={pinModalStyles.description}>
+                {PIN_DESC_MAP[mode] ?? 'Enter your 6-digit PIN to confirm.'}
+              </Text>
+
+              {/* PIN dots */}
+              <View style={pinModalStyles.dotsRow}>
+                {[...Array(6)].map((_, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      pinModalStyles.dot,
+                      pinValue.length > i && pinModalStyles.dotFilled,
+                    ]}
+                  />
+                ))}
+              </View>
+
+              {/* Error message */}
+              {pinError ? (
+                <Text style={pinModalStyles.errorText}>{pinError}</Text>
+              ) : null}
+
+              {/* Keypad */}
+              <View style={pinModalStyles.keypad}>
+                {[['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9']].map(
+                  (row, ri) => (
+                    <View key={ri} style={pinModalStyles.keyRow}>
+                      {row.map((key) => (
+                        <TouchableOpacity
+                          key={key}
+                          style={pinModalStyles.keyBtn}
+                          onPress={() => onKeyPress(key)}
+                          activeOpacity={0.7}
+                          accessibilityLabel={key}
+                          accessibilityRole="button"
+                        >
+                          <Text style={pinModalStyles.keyText}>{key}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  ),
+                )}
+
+                {/* Bottom row: empty | 0 | backspace */}
+                <View style={pinModalStyles.keyRow}>
+                  <View style={pinModalStyles.keyBtnGhost} />
+                  <TouchableOpacity
+                    style={pinModalStyles.keyBtn}
+                    onPress={() => onKeyPress('0')}
+                    activeOpacity={0.7}
+                    accessibilityLabel="0"
+                    accessibilityRole="button"
+                  >
+                    <Text style={pinModalStyles.keyText}>0</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={pinModalStyles.keyBtnGhost}
+                    onPress={() => onKeyPress('backspace')}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Backspace"
+                    accessibilityRole="button"
+                  >
+                    <Icon name="backspace" size={22} color={Colors.textPrimary} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Action buttons */}
+              <View style={pinModalStyles.btnRow}>
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={pinModalStyles.cancelBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel"
+                >
+                  <Text style={pinModalStyles.btnText}>Cancel</Text>
+                </TouchableOpacity>
+
+                {pinValue.length === 6 && (
+                  <TouchableOpacity
+                    onPress={onConfirm}
+                    style={pinModalStyles.confirmBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel="Confirm PIN"
+                  >
+                    <Text style={pinModalStyles.btnText}>Confirm</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Forgot PIN */}
+              <TouchableOpacity
+                onPress={onForgotPin}
+                style={pinModalStyles.forgotPinBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Forgot PIN, go to Security settings"
+              >
+                <Text style={pinModalStyles.forgotPinText}>Forgot PIN?</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          </TouchableWithoutFeedback>
+        </View>
+      </TouchableWithoutFeedback>
+    </Modal>
+  );
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MAIN SCREEN COMPONENT
 // ═════════════════════════════════════════════════════════════════════════════
 const SettingsScreen = ({ navigation }) => {
   // ── Safe area ──────────────────────────────────────────────────────────────
   const insets = useSafeAreaInsets();
 
   // ── Context ────────────────────────────────────────────────────────────────
-  const { chatHidden: chatHideEnabled, setChatHidden: setChatHideEnabled }           = useChatVisibility();
-  const { securityHidden: securityHideEnabled, setSecurityHidden: setSecurityHideEnabled } = useSecurityVisibility();
+  const {
+    chatHidden: chatHideEnabled,
+    setChatHidden: setChatHideEnabled,
+  } = useChatVisibility();
+  const {
+    securityHidden: securityHideEnabled,
+    setSecurityHidden: setSecurityHideEnabled,
+  } = useSecurityVisibility();
 
   // ── UI state ───────────────────────────────────────────────────────────────
   const [drawerOpen, setDrawerOpen]         = useState(false);
@@ -70,14 +310,17 @@ const SettingsScreen = ({ navigation }) => {
   const [pinModalVisible, setPinModalVisible] = useState(false);
   const [pinValue, setPinValue]               = useState('');
   const [pinError, setPinError]               = useState('');
-  /** @type {React.MutableRefObject<PinMode|null>} */
-  const pinModeRef = useRef(null);
+  const [pinMode, setPinMode]                 = useState(null);
 
   /**
-   * Ref mirror of pinModalVisible — used in the BackHandler callback to avoid
-   * stale closure issues (BackHandler captures the value at registration time).
+   * Ref mirrors of state values used inside BackHandler callback.
+   * BackHandler captures values at registration time — refs always give
+   * the latest value without requiring re-registration.
    */
+  const drawerOpenRef      = useRef(false);
   const pinModalVisibleRef = useRef(false);
+
+  useEffect(() => { drawerOpenRef.current = drawerOpen; },      [drawerOpen]);
   useEffect(() => { pinModalVisibleRef.current = pinModalVisible; }, [pinModalVisible]);
 
   // ── Animation refs ─────────────────────────────────────────────────────────
@@ -86,7 +329,12 @@ const SettingsScreen = ({ navigation }) => {
   const fadeAnim       = useRef(new Animated.Value(0)).current;
   const slideAnim      = useRef(new Animated.Value(50)).current;
   const pinShakeAnim   = useRef(new Animated.Value(0)).current;
-  const modalAnim      = useRef(new Animated.Value(0)).current;
+  /*
+    modalAnim was previously animated but never applied to any Animated.View.
+    Kept as a ref to preserve the open/close animation calls (they are
+    harmless) without removing declared functionality.
+  */
+  const modalAnim = useRef(new Animated.Value(0)).current;
 
   // ════════════════════════════════════════════════════════════════════════════
   // EFFECTS
@@ -129,14 +377,9 @@ const SettingsScreen = ({ navigation }) => {
     loadUserRole();
   }, []);
 
-  // Entry animation + back handler + permissions
+  // Entry animation + permissions
   useEffect(() => {
     requestCallPhonePermission();
-
-    const backHandler = BackHandler.addEventListener(
-      'hardwareBackPress',
-      handleBackPress,
-    );
 
     Animated.parallel([
       Animated.timing(fadeAnim,  { toValue: 1, duration: 600, useNativeDriver: true }),
@@ -144,51 +387,62 @@ const SettingsScreen = ({ navigation }) => {
     ]).start();
 
     return () => {
-      backHandler.remove();
       fadeAnim.stopAnimation();
       slideAnim.stopAnimation();
       drawerOffset.stopAnimation();
       overlayOpacity.stopAnimation();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fadeAnim, slideAnim, drawerOffset, overlayOpacity]);
+
+  /*
+    BackHandler is registered in its own effect so it can be correctly
+    re-registered when nothing changes — it reads from refs (always fresh)
+    so it does NOT need drawerOpen or pinModalVisible in its deps array.
+    This fixes the stale-closure bug where drawerOpen was always `false`
+    inside the handler because BackHandler captured the initial value.
+  */
+  useEffect(() => {
+    const handleBackPress = () => {
+      if (drawerOpenRef.current) {
+        setDrawerOpen(false);
+        return true;
+      }
+      if (pinModalVisibleRef.current) {
+        closePinModal();
+        return true;
+      }
+      return false;
+    };
+
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      handleBackPress,
+    );
+
+    return () => backHandler.remove();
+    // No deps needed — handler reads from refs which are always current
   }, []);
 
   // Drawer open/close animation
   useEffect(() => {
     Animated.parallel([
       Animated.timing(drawerOffset, {
-        toValue:        drawerOpen ? 0 : -DRAWER_WIDTH,
-        duration:       300,
+        toValue:         drawerOpen ? 0 : -DRAWER_WIDTH,
+        duration:        300,
         useNativeDriver: true,
-        easing:         Easing.inOut(Easing.ease),
+        easing:          Easing.inOut(Easing.ease),
       }),
       Animated.timing(overlayOpacity, {
-        toValue:        drawerOpen ? 0.7 : 0,
-        duration:       300,
+        toValue:         drawerOpen ? 0.7 : 0,
+        duration:        300,
         useNativeDriver: true,
       }),
     ]).start();
-  }, [drawerOpen]);
+  }, [drawerOpen, drawerOffset, overlayOpacity]);
 
   // ════════════════════════════════════════════════════════════════════════════
   // HANDLERS
   // ════════════════════════════════════════════════════════════════════════════
-
-  /**
-   * Uses refs to avoid stale-closure issues with BackHandler.
-   * `drawerOpen` is read from state via setState callback — always fresh.
-   */
-  const handleBackPress = useCallback(() => {
-    if (drawerOpen) {
-      setDrawerOpen(false);
-      return true;
-    }
-    if (pinModalVisibleRef.current) {
-      closePinModal();
-      return true;
-    }
-    return false;
-  }, [drawerOpen]);
 
   const requestCallPhonePermission = async () => {
     if (Platform.OS !== 'android') return;
@@ -208,68 +462,62 @@ const SettingsScreen = ({ navigation }) => {
     }
   };
 
-  // ── PIN Modal (unified) ───────────────────────────────────────────────────
+  // ── PIN Modal ─────────────────────────────────────────────────────────────
 
   /**
    * Opens the PIN modal for the given mode after verifying a PIN exists.
-   *
    * @param {PinMode} mode
    */
-  const openPinModalForMode = async (mode) => {
-    const serviceMap = {
-      chat:     CHAT_HIDE_SERVICE,
-      security: SECURITY_HIDE_SERVICE,
-      login:    LOGIN_AUTH_SERVICE,
-    };
-
-    const labelMap = {
-      chat:     'Connect PIN',
-      security: 'Security PIN',
-      login:    'Login PIN',
-    };
-
-    const navHintMap = {
-      chat:     'Security Settings → Connect Hide',
-      security: 'Security Settings → Security Hide',
-      login:    'Security Settings',
-    };
-
+  const openPinModalForMode = useCallback(async (mode) => {
     try {
-      const creds = await Keychain.getGenericPassword({ service: serviceMap[mode] });
+      const creds = await Keychain.getGenericPassword({
+        service: PIN_SERVICE_MAP[mode],
+      });
 
       if (!creds) {
         Alert.alert(
-          `${labelMap[mode]} Not Set`,
-          `Please go to ${navHintMap[mode]} and set a PIN first.`,
+          `${PIN_LABEL_MAP[mode]} Not Set`,
+          `Please go to ${PIN_NAV_HINT_MAP[mode]} and set a PIN first.`,
           [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Go to Security', onPress: () => navigation.navigate('Security') },
+            {
+              text: 'Go to Security',
+              onPress: () => navigation.navigate('Security'),
+            },
           ],
         );
         return;
       }
 
-      pinModeRef.current = mode;
+      setPinMode(mode);
       setPinValue('');
       setPinError('');
       setPinModalVisible(true);
-      Animated.timing(modalAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+      Animated.timing(modalAnim, {
+        toValue:         1,
+        duration:        300,
+        useNativeDriver: true,
+      }).start();
     } catch (e) {
       console.warn(`[SettingsScreen] openPinModalForMode(${mode}) error:`, e);
       Alert.alert('Error', 'Unable to verify PIN status. Please try again.');
     }
-  };
+  }, [navigation, modalAnim]);
 
-  const closePinModal = () => {
-    Animated.timing(modalAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+  const closePinModal = useCallback(() => {
+    Animated.timing(modalAnim, {
+      toValue:         0,
+      duration:        300,
+      useNativeDriver: true,
+    }).start(() => {
       setPinModalVisible(false);
       setPinValue('');
       setPinError('');
-      pinModeRef.current = null;
+      setPinMode(null);
     });
-  };
+  }, [modalAnim]);
 
-  const shakePinAnim = () => {
+  const shakePinAnim = useCallback(() => {
     Vibration.vibrate(100);
     Animated.sequence([
       Animated.timing(pinShakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
@@ -277,32 +525,27 @@ const SettingsScreen = ({ navigation }) => {
       Animated.timing(pinShakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
       Animated.timing(pinShakeAnim, { toValue:   0, duration: 50, useNativeDriver: true }),
     ]).start();
-  };
+  }, [pinShakeAnim]);
 
-  const handlePinKeyPress = (key) => {
+  const handlePinKeyPress = useCallback((key) => {
     if (key === 'backspace') {
       setPinValue(prev => prev.slice(0, -1));
     } else if (pinValue.length < 6) {
       setPinValue(prev => prev + key);
     }
-  };
+  }, [pinValue]);
 
-  const handlePinConfirm = async () => {
+  const handlePinConfirm = useCallback(async () => {
     if (pinValue.length !== 6) {
       setPinError('Enter all 6 digits');
       shakePinAnim();
       return;
     }
 
-    const serviceMap = {
-      chat:     CHAT_HIDE_SERVICE,
-      security: SECURITY_HIDE_SERVICE,
-      login:    LOGIN_AUTH_SERVICE,
-    };
-
     try {
-      const service = serviceMap[pinModeRef.current];
-      const creds   = await Keychain.getGenericPassword({ service });
+      const creds = await Keychain.getGenericPassword({
+        service: PIN_SERVICE_MAP[pinMode],
+      });
 
       if (!creds || pinValue !== creds.password) {
         setPinError('Incorrect PIN. Please try again.');
@@ -312,9 +555,9 @@ const SettingsScreen = ({ navigation }) => {
       }
 
       // Apply the toggled state for the relevant mode
-      if (pinModeRef.current === 'chat') {
+      if (pinMode === 'chat') {
         await setChatHideEnabled(!chatHideEnabled);
-      } else if (pinModeRef.current === 'security') {
+      } else if (pinMode === 'security') {
         await setSecurityHideEnabled(!securityHideEnabled);
       }
 
@@ -324,207 +567,42 @@ const SettingsScreen = ({ navigation }) => {
       setPinError('Failed to verify PIN. Please try again.');
       shakePinAnim();
     }
-  };
+  }, [
+    pinValue,
+    pinMode,
+    chatHideEnabled,
+    securityHideEnabled,
+    setChatHideEnabled,
+    setSecurityHideEnabled,
+    closePinModal,
+    shakePinAnim,
+  ]);
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // RENDER HELPERS
-  // ════════════════════════════════════════════════════════════════════════════
+  const handleForgotPin = useCallback(() => {
+    closePinModal();
+    navigation.navigate('Security');
+  }, [closePinModal, navigation]);
 
-  /**
-   * Reusable toggle row card.
-   */
-  const renderToggleCard = ({ iconName, iconColor, title, subtitle, isEnabled, onToggle }) => (
-    <TouchableOpacity
-      style={styles.securityCard}
-      onPress={onToggle}
-      activeOpacity={0.85}
-      accessibilityRole="switch"
-      accessibilityState={{ checked: isEnabled }}
-      accessibilityLabel={`${title} toggle, currently ${isEnabled ? 'on' : 'off'}`}
-    >
-      <Icon name={iconName} size={26} color={iconColor} />
-      <View style={styles.securityText}>
-        <View style={localStyles.cardTextBlock}>
-          <Text style={styles.securityTitle}>{title}</Text>
-          {subtitle ? (
-            <Text style={localStyles.subtitle}>{subtitle}</Text>
-          ) : null}
-        </View>
-        <View style={styles.toggleContainer}>
-          <Text style={styles.toggleText}>{isEnabled ? 'ON' : 'OFF'}</Text>
-          <View style={[styles.toggleSwitch, isEnabled ? styles.toggleOn : styles.toggleOff]}>
-            <View style={[styles.toggleKnob, isEnabled ? styles.knobOn : styles.knobOff]} />
-          </View>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-
-  /**
-   * PIN input modal — handles chat, security, and login modes.
-   *
-   * Always rendered in the tree (visibility controlled by `visible` prop)
-   * so the Modal's own animation has a stable mount to work with.
-   */
-  const renderPinModal = () => {
-    const mode = pinModeRef.current;
-
-    // Derive title and description from mode
-    const titleMap = {
-      security: `Security — Turn ${securityHideEnabled ? 'OFF' : 'ON'}`,
-      chat:     `Chat — Turn ${chatHideEnabled ? 'OFF' : 'ON'}`,
-      login:    'Confirm Login PIN',
-    };
-    const descMap = {
-      security: 'Enter your 6-digit Security Hide PIN to confirm.',
-      chat:     'Enter your 6-digit Chat Hide PIN to confirm.',
-      login:    'Enter your Login PIN to change App Icon visibility.',
-    };
-
-    return (
-      <Modal
-        visible={pinModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={closePinModal}
-        statusBarTranslucent   // ensures modal covers status bar on Android
-      >
-        <TouchableWithoutFeedback onPress={closePinModal}>
-          <View style={pinModalStyles.overlay}>
-            {/* Inner press does NOT propagate to TouchableWithoutFeedback */}
-            <TouchableWithoutFeedback onPress={() => {}}>
-              <Animated.View
-                style={[
-                  pinModalStyles.container,
-                  { transform: [{ translateX: pinShakeAnim }] },
-                ]}
-              >
-                {/* Title */}
-                <Text style={pinModalStyles.title}>
-                  {titleMap[mode] ?? 'Enter PIN'}
-                </Text>
-
-                {/* Description */}
-                <Text style={pinModalStyles.description}>
-                  {descMap[mode] ?? 'Enter your 6-digit PIN to confirm.'}
-                </Text>
-
-                {/* PIN dots */}
-                <View style={pinModalStyles.dotsRow}>
-                  {[...Array(6)].map((_, i) => (
-                    <View
-                      key={i}
-                      style={[
-                        pinModalStyles.dot,
-                        pinValue.length > i && pinModalStyles.dotFilled,
-                      ]}
-                    />
-                  ))}
-                </View>
-
-                {/* Error message */}
-                {pinError ? (
-                  <Text style={pinModalStyles.errorText}>{pinError}</Text>
-                ) : null}
-
-                {/* Keypad */}
-                <View style={pinModalStyles.keypad}>
-                  {[['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9']].map((row, ri) => (
-                    <View key={ri} style={pinModalStyles.keyRow}>
-                      {row.map(key => (
-                        <TouchableOpacity
-                          key={key}
-                          style={pinModalStyles.keyBtn}
-                          onPress={() => handlePinKeyPress(key)}
-                          activeOpacity={0.7}
-                          accessibilityLabel={key}
-                          accessibilityRole="button"
-                        >
-                          <Text style={pinModalStyles.keyText}>{key}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  ))}
-
-                  {/* Bottom row: empty | 0 | backspace */}
-                  <View style={pinModalStyles.keyRow}>
-                    <View style={pinModalStyles.keyBtnGhost} />
-                    <TouchableOpacity
-                      style={pinModalStyles.keyBtn}
-                      onPress={() => handlePinKeyPress('0')}
-                      activeOpacity={0.7}
-                      accessibilityLabel="0"
-                      accessibilityRole="button"
-                    >
-                      <Text style={pinModalStyles.keyText}>0</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={pinModalStyles.keyBtnGhost}
-                      onPress={() => handlePinKeyPress('backspace')}
-                      activeOpacity={0.7}
-                      accessibilityLabel="Backspace"
-                      accessibilityRole="button"
-                    >
-                      <Icon name="backspace" size={22} color={Colors.textPrimary} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* Action buttons */}
-                <View style={pinModalStyles.btnRow}>
-                  <TouchableOpacity
-                    onPress={closePinModal}
-                    style={pinModalStyles.cancelBtn}
-                    accessibilityRole="button"
-                    accessibilityLabel="Cancel"
-                  >
-                    <Text style={pinModalStyles.btnText}>Cancel</Text>
-                  </TouchableOpacity>
-
-                  {pinValue.length === 6 && (
-                    <TouchableOpacity
-                      onPress={handlePinConfirm}
-                      style={pinModalStyles.confirmBtn}
-                      accessibilityRole="button"
-                      accessibilityLabel="Confirm PIN"
-                    >
-                      <Text style={pinModalStyles.btnText}>Confirm</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {/* Forgot PIN */}
-                <TouchableOpacity
-                  onPress={() => {
-                    closePinModal();
-                    navigation.navigate('Security');
-                  }}
-                  style={pinModalStyles.forgotPinBtn}
-                  accessibilityRole="button"
-                  accessibilityLabel="Forgot PIN, go to Security settings"
-                >
-                  <Text style={pinModalStyles.forgotPinText}>Forgot PIN?</Text>
-                </TouchableOpacity>
-              </Animated.View>
-            </TouchableWithoutFeedback>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
-    );
-  };
+  const handleOpenDrawer  = useCallback(() => setDrawerOpen(true),  []);
+  const handleCloseDrawer = useCallback(() => setDrawerOpen(false), []);
 
   // ════════════════════════════════════════════════════════════════════════════
   // MAIN RENDER
   // ════════════════════════════════════════════════════════════════════════════
   return (
     <View style={styles.container}>
+      {/*
+        translucent + transparent keeps the gradient/background colour
+        visible behind the system status bar on Android.
+      */}
+      <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
 
       {/* ── Drawer Overlay ─────────────────────────────────────────────────
           Always rendered — pointer events disabled when drawer is closed.
           This keeps the Animated.View mounted so opacity animation always
           has a target node, preventing "animated value has no listeners" warnings.
       ──────────────────────────────────────────────────────────────────── */}
-      <TouchableWithoutFeedback onPress={() => setDrawerOpen(false)}>
+      <TouchableWithoutFeedback onPress={handleCloseDrawer}>
         <Animated.View
           style={[styles.drawerOverlay, { opacity: overlayOpacity }]}
           pointerEvents={drawerOpen ? 'auto' : 'none'}
@@ -546,18 +624,22 @@ const SettingsScreen = ({ navigation }) => {
         <View style={[styles.drawerInnerContent, getDrawerInsets(insets)]}>
           <CustomDrawerContent
             navigation={navigation}
-            onClose={() => setDrawerOpen(false)}
+            onClose={handleCloseDrawer}
           />
         </View>
       </Animated.View>
 
       {/* ── Main Scroll Content ─────────────────────────────────────────── */}
       <ScrollView
-        style={styles.scrollView}                      // was styles.mainContent (removed)
+        style={styles.scrollView}
         contentContainerStyle={[
           styles.contentContainer,
           {
-            // Dynamic safe-area padding replaces hardcoded paddingTop/Bottom
+            /*
+              Dynamic safe-area padding:
+                • Top    — clears status bar + menu button height
+                • Bottom — clears gesture nav bar / home indicator
+            */
             paddingTop:    getContentTopPadding(insets.top),
             paddingBottom: getContentBottomPadding(insets.bottom),
           },
@@ -566,10 +648,13 @@ const SettingsScreen = ({ navigation }) => {
       >
         {/* ── Floating Menu Button ──────────────────────────────────────── */}
         <TouchableOpacity
-          onPress={() => setDrawerOpen(true)}
+          onPress={handleOpenDrawer}
           style={[
             styles.menuButton,
-            // Dynamic top offset replaces hardcoded top: 16
+            /*
+              Dynamic top offset — pushes button below the status bar/notch
+              on every device without a hardcoded magic number.
+            */
             { top: getMenuButtonTopOffset(insets.top) },
           ]}
           activeOpacity={0.8}
@@ -588,31 +673,31 @@ const SettingsScreen = ({ navigation }) => {
           <View style={styles.securityCards}>
 
             {/* Notifications */}
-            {renderToggleCard({
-              iconName:  'notifications',
-              iconColor: Colors.primary,
-              title:     'Notifications',
-              isEnabled: notifications,
-              onToggle:  () => setNotifications(prev => !prev),
-            })}
+            <ToggleCard
+              iconName="notifications"
+              iconColor={Colors.primary}
+              title="Notifications"
+              isEnabled={notifications}
+              onToggle={() => setNotifications(prev => !prev)}
+            />
 
             {/* Security Hide */}
-            {renderToggleCard({
-              iconName:  'security',
-              iconColor: Colors.warning,
-              title:     'Security',
-              isEnabled: securityHideEnabled,
-              onToggle:  () => openPinModalForMode('security'),
-            })}
+            <ToggleCard
+              iconName="security"
+              iconColor={Colors.warning}
+              title="Security"
+              isEnabled={securityHideEnabled}
+              onToggle={() => openPinModalForMode('security')}
+            />
 
             {/* Chat Hide */}
-            {renderToggleCard({
-              iconName:  'hub',
-              iconColor: Colors.warning,
-              title:     'Connect',
-              isEnabled: chatHideEnabled,
-              onToggle:  () => openPinModalForMode('chat'),
-            })}
+            <ToggleCard
+              iconName="hub"
+              iconColor={Colors.warning}
+              title="Connect"
+              isEnabled={chatHideEnabled}
+              onToggle={() => openPinModalForMode('chat')}
+            />
 
           </View>
         </View>
@@ -672,8 +757,23 @@ const SettingsScreen = ({ navigation }) => {
 
       </ScrollView>
 
-      {/* ── PIN Modal ─────────────────────────────────────────────────── */}
-      {renderPinModal()}
+      {/* ── PIN Modal ─────────────────────────────────────────────────────
+          Rendered as a stable memo component so its internal state and
+          animations are not torn down on every parent render.
+      ──────────────────────────────────────────────────────────────────── */}
+      <PinModal
+        visible={pinModalVisible}
+        mode={pinMode}
+        pinValue={pinValue}
+        pinError={pinError}
+        pinShakeAnim={pinShakeAnim}
+        securityHideEnabled={securityHideEnabled}
+        chatHideEnabled={chatHideEnabled}
+        onKeyPress={handlePinKeyPress}
+        onConfirm={handlePinConfirm}
+        onClose={closePinModal}
+        onForgotPin={handleForgotPin}
+      />
 
     </View>
   );
@@ -696,9 +796,9 @@ const localStyles = StyleSheet.create({
 
   /** Muted secondary text beneath a card title */
   subtitle: {
-    color:     Colors.textSecondary,
-    fontSize:  Fonts.size.xs,
-    marginTop: Spacing.xs / 2,   // 2
+    color:      Colors.textSecondary,
+    fontSize:   Fonts.size.xs,
+    marginTop:  Spacing.xs / 2,  // 2
     fontFamily: Fonts.family.primary,
   },
 });
@@ -706,6 +806,7 @@ const localStyles = StyleSheet.create({
 /**
  * Styles for the PIN entry modal.
  * Kept separate from localStyles for clarity — this is a self-contained UI unit.
+ * All arithmetic on theme tokens replaced with explicit values for safety.
  */
 const pinModalStyles = StyleSheet.create({
   overlay: {
@@ -739,7 +840,12 @@ const pinModalStyles = StyleSheet.create({
 
   description: {
     color:        Colors.textSecondary,
-    fontSize:     Fonts.size.xs + 1,   // 13
+    /*
+      Was: Fonts.size.xs + 1
+      Arithmetic on theme tokens is fragile if token type changes.
+      Replaced with an explicit value that matches the original intent (13).
+    */
+    fontSize:     13,
     fontFamily:   Fonts.family.primary,
     textAlign:    'center',
     marginBottom: Spacing.xs,
@@ -759,7 +865,12 @@ const pinModalStyles = StyleSheet.create({
     borderRadius:    8,
     borderWidth:     2,
     borderColor:     '#6C63FF',
-    backgroundColor: Colors.transparent,
+    /*
+      Was: Colors.transparent
+      Colors.transparent may not exist in all theme files.
+      'transparent' is a built-in React Native value — always safe.
+    */
+    backgroundColor: 'transparent',
   },
 
   dotFilled: {
@@ -767,7 +878,12 @@ const pinModalStyles = StyleSheet.create({
   },
 
   errorText: {
-    color:           Colors.danger,
+    /*
+      Was: Colors.danger
+      Replaced with an explicit safe fallback in case Colors.danger is
+      not defined in the consumer's theme file.
+    */
+    color:           Colors.danger ?? '#EF5350',
     textAlign:       'center',
     marginBottom:    Spacing.sm,
     fontSize:        Fonts.size.xs,
@@ -785,7 +901,11 @@ const pinModalStyles = StyleSheet.create({
 
   keyRow: {
     flexDirection: 'row',
-    marginBottom:  Spacing.md - Spacing.xs,  // 12
+    /*
+      Was: Spacing.md - Spacing.xs (arithmetic on tokens — fragile)
+      Replaced with explicit value matching the original intent (12).
+    */
+    marginBottom:  12,
     gap:           Spacing.md,
   },
 
@@ -805,7 +925,7 @@ const pinModalStyles = StyleSheet.create({
     width:           60,
     height:          60,
     borderRadius:    30,
-    backgroundColor: Colors.transparent,
+    backgroundColor: 'transparent',
     justifyContent:  'center',
     alignItems:      'center',
     borderWidth:     0,
@@ -813,7 +933,11 @@ const pinModalStyles = StyleSheet.create({
 
   keyText: {
     color:      Colors.textPrimary,
-    fontSize:   Fonts.size.xl + 1,   // 23 — one step above xl for keypad prominence
+    /*
+      Was: Fonts.size.xl + 1
+      Replaced with explicit value (23) matching the original intent.
+    */
+    fontSize:   23,
     fontWeight: Fonts.weight.bold,
     fontFamily: Fonts.family.primary,
   },
@@ -827,7 +951,11 @@ const pinModalStyles = StyleSheet.create({
 
   cancelBtn: {
     flex:            1,
-    paddingVertical: Spacing.md - Spacing.xs,  // 14
+    /*
+      Was: Spacing.md - Spacing.xs (arithmetic — fragile)
+      Replaced with explicit value (14) matching the original intent.
+    */
+    paddingVertical: 14,
     borderRadius:    Radii.md,
     alignItems:      'center',
     backgroundColor: Colors.textSecondary,
@@ -835,7 +963,7 @@ const pinModalStyles = StyleSheet.create({
 
   confirmBtn: {
     flex:            1,
-    paddingVertical: Spacing.md - Spacing.xs,  // 14
+    paddingVertical: 14,
     borderRadius:    Radii.md,
     alignItems:      'center',
     backgroundColor: '#6C63FF',
@@ -843,22 +971,30 @@ const pinModalStyles = StyleSheet.create({
 
   btnText: {
     color:      Colors.textPrimary,
-    fontSize:   Fonts.size.sm + 1,  // 15
+    /*
+      Was: Fonts.size.sm + 1
+      Replaced with explicit value (15) matching the original intent.
+    */
+    fontSize:   15,
     fontWeight: Fonts.weight.bold,
     fontFamily: Fonts.family.primary,
   },
 
   forgotPinBtn: {
     alignItems:      'center',
-    marginTop:       Spacing.md - Spacing.xs,  // 14
-    paddingVertical: Spacing.xs + 2,           // 6
+    /*
+      Was: Spacing.md - Spacing.xs (arithmetic — fragile)
+      Replaced with explicit value (14) matching the original intent.
+    */
+    marginTop:       14,
+    paddingVertical: 6,
   },
 
   forgotPinText: {
-    color:             '#6C63FF',
-    fontSize:          Fonts.size.xs + 1,  // 13
-    fontWeight:        Fonts.weight.medium,
-    fontFamily:        Fonts.family.primary,
+    color:              '#6C63FF',
+    fontSize:           13,
+    fontWeight:         Fonts.weight.medium,
+    fontFamily:         Fonts.family.primary,
     textDecorationLine: 'underline',
   },
 });

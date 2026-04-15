@@ -1,13 +1,19 @@
-import { StyleSheet, Dimensions, Platform } from 'react-native';
+import { StyleSheet, Platform } from 'react-native';
 
-const { width, height } = Dimensions.get('window');
+/**
+ * Height of the visible header content row (back button + title).
+ * Exported so ProfileScreen can compute the total header height as:
+ *   insets.top + HEADER_CONTENT_HEIGHT
+ * without duplicating the magic number.
+ */
+export const HEADER_CONTENT_HEIGHT = 60;
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0A0E27',
   },
-  
+
   // Loading State
   loadingContainer: {
     flex: 1,
@@ -26,50 +32,82 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
   },
-  
+
   contentWrapper: {
     flex: 1,
     paddingBottom: 40,
   },
 
   // Header Background
+  /*
+    'height' is intentionally omitted here — it is set dynamically in the
+    screen as (insets.top + HEADER_CONTENT_HEIGHT + 300) so the coloured
+    slab always fills the correct area regardless of device notch size.
+  */
   headerBackground: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: 300,
     backgroundColor: '#1A1F3A',
     borderBottomLeftRadius: 40,
     borderBottomRightRadius: 40,
     opacity: 0.8,
   },
 
-  // Header
+  /*
+    Outer header shell — no fixed height, no paddingTop.
+    Contains two children:
+      1. An inline <View style={{ height: insets.top }} /> status-bar spacer
+      2. headerContent — the visible row with back button + title
+  */
   header: {
+    zIndex: 10,
+  },
+
+  /*
+    Inner content row — fixed height so the absolutely-positioned backButton
+    always centres within THIS row, not within the full header including the
+    status-bar spacer above it.
+  */
+  headerContent: {
+    height: HEADER_CONTENT_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 60 : 20,
     paddingBottom: 16,
-    zIndex: 10,
   },
+
   backButton: {
     padding: 8,
     borderRadius: 12,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    /*
+      Width/height kept explicit so headerSpacer can mirror them exactly,
+      keeping the title perfectly centred in the row.
+    */
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
     color: '#FFFFFF',
     letterSpacing: 0.5,
   },
-  editButton: {
-    padding: 8,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+
+  /*
+    Replaces the old `editButton` empty-View placeholder.
+    Same dimensions as backButton so the title stays centred via
+    space-between. Transparent — no visual presence.
+  */
+  headerSpacer: {
+    width: 40,
+    height: 40,
   },
 
   // Profile Section
@@ -78,12 +116,12 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     marginTop: 10,
   },
-  
+
   avatarContainer: {
     position: 'relative',
     marginBottom: 16,
   },
-  
+
   avatar: {
     width: 110,
     height: 110,
@@ -94,7 +132,7 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: '#475569',
   },
-  
+
   avatarPlaceholder: {
     width: 110,
     height: 110,
@@ -105,13 +143,13 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: 'rgba(255,255,255,0.2)',
   },
-  
+
   avatarText: {
     fontSize: 36,
     fontWeight: 'bold',
     color: '#FFFFFF',
   },
-  
+
   premiumBadge: {
     position: 'absolute',
     bottom: -4,
@@ -130,14 +168,14 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 6,
   },
-  
+
   activeBadgeText: {
     color: '#FFF',
     fontSize: 10,
     fontWeight: '800',
     marginLeft: 2,
   },
-  
+
   userName: {
     fontSize: 28,
     fontWeight: 'bold',
@@ -145,7 +183,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: 'center',
   },
-  
+
   userRole: {
     fontSize: 14,
     color: '#8B9DC3',
@@ -168,19 +206,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
   },
-  
+
   statBox: {
     alignItems: 'center',
     flex: 1,
   },
-  
+
   statValue: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#FFFFFF',
     marginBottom: 4,
   },
-  
+
   statLabel: {
     fontSize: 12,
     color: '#6B7280',
@@ -188,7 +226,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  
+
   statDivider: {
     width: 1,
     height: 40,
@@ -207,7 +245,7 @@ const styles = StyleSheet.create({
     padding: 20,
     overflow: 'hidden',
   },
-  
+
   cardTitle: {
     fontSize: 18,
     fontWeight: '700',
@@ -223,14 +261,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.05)',
   },
-  
+
   infoLabel: {
     width: 120,
     fontSize: 14,
     color: '#6B7280',
     fontWeight: '500',
   },
-  
+
   infoValue: {
     flex: 1,
     fontSize: 15,
@@ -263,19 +301,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 215, 0, 0.3)',
   },
-  
+
   upgradeTextContainer: {
     flex: 1,
     marginLeft: 12,
   },
-  
+
   upgradeButtonText: {
     color: '#FFD700',
     fontSize: 16,
     fontWeight: '700',
     marginBottom: 2,
   },
-  
+
   upgradeSubtext: {
     color: 'rgba(255, 215, 0, 0.7)',
     fontSize: 13,
@@ -286,7 +324,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     marginBottom: 12,
   },
-  
+
   cancelButton: {
     backgroundColor: 'rgba(239, 68, 68, 0.1)',
     paddingVertical: 16,
@@ -295,7 +333,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(239, 68, 68, 0.3)',
   },
-  
+
   cancelButtonText: {
     color: '#EF4444',
     fontSize: 16,
@@ -315,13 +353,13 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     gap: 8,
   },
-  
+
   logoutButtonText: {
     color: '#EF4444',
     fontSize: 16,
     fontWeight: '600',
   },
-  
+
   versionText: {
     textAlign: 'center',
     color: '#475569',
@@ -518,6 +556,23 @@ const styles = StyleSheet.create({
   upgradeSubtitle: {
     color: 'rgba(255, 215, 0, 0.7)',
     fontSize: 13,
+  },
+
+  qrButton: {
+    marginTop: 16,
+    backgroundColor: '#00D9FF',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+    marginLeft: 8,
   },
 });
 

@@ -1,7 +1,31 @@
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Platform } from 'react-native';
 import { Colors, Fonts, Spacing } from './theme';
 
-const HEADER_HEIGHT = 60;
+/**
+ * Base content height of the header row (back button + title).
+ * The status bar spacer height (insets.top) is added on top of this
+ * dynamically in the screen component — this value represents the
+ * visible content row only.
+ */
+export const HEADER_HEIGHT = 60;
+
+/**
+ * Centralised font-family — avoids repeating the Platform ternary on every
+ * text style.
+ */
+const FONT_FAMILY = Platform.OS === 'ios' ? 'System' : 'Roboto';
+
+/**
+ * Shared input padding used by both subjectInput and textInput.
+ * Extracted to remove duplication.
+ */
+const INPUT_PADDING_VERTICAL = 12;
+const INPUT_PADDING_HORIZONTAL = 14;
+
+/**
+ * Shared bottom margin used by inputLabel and labelRow.
+ */
+const LABEL_MARGIN_BOTTOM = 6;
 
 export default StyleSheet.create({
   container: {
@@ -14,19 +38,32 @@ export default StyleSheet.create({
   },
 
   /* ===== HEADER ===== */
+  /*
+    Outer shell — holds the invisible status-bar spacer (height: insets.top,
+    set inline) and the visible headerContent row below it.
+    No fixed height here; height is determined by its two children.
+  */
   header: {
-    height: HEADER_HEIGHT,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.98)',
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderLight,
-    backgroundColor: 'rgba(15, 23, 42, 0.98)',
     shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 10,
     elevation: 8,
+  },
+
+  /*
+    Inner content row — back button and title live here.
+    Fixed height so the absolute-positioned back button always centres
+    within this row regardless of the inset spacer above it.
+  */
+  headerContent: {
+    height: HEADER_HEIGHT,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   backButton: {
@@ -47,6 +84,7 @@ export default StyleSheet.create({
     fontWeight: Fonts.weight.bold,
     color: Colors.textPrimary,
     letterSpacing: 0.3,
+    fontFamily: FONT_FAMILY,
   },
 
   /* ===== CONTENT ===== */
@@ -84,6 +122,7 @@ export default StyleSheet.create({
     fontWeight: Fonts.weight.bold,
     marginBottom: Spacing.sm,
     textAlign: 'center',
+    fontFamily: FONT_FAMILY,
   },
 
   description: {
@@ -92,8 +131,10 @@ export default StyleSheet.create({
     textAlign: 'center',
     marginBottom: Spacing.xl,
     lineHeight: 20,
+    fontFamily: FONT_FAMILY,
   },
 
+  /* ===== INPUTS ===== */
   inputContainer: {
     width: '100%',
     marginBottom: Spacing.lg,
@@ -101,43 +142,49 @@ export default StyleSheet.create({
 
   inputLabel: {
     color: Colors.textPrimary,
-    marginBottom: 6,
+    marginBottom: LABEL_MARGIN_BOTTOM,
     fontSize: Fonts.size.sm,
     fontWeight: Fonts.weight.medium,
+    fontFamily: FONT_FAMILY,
   },
 
   labelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: LABEL_MARGIN_BOTTOM,
   },
 
   subjectInput: {
     backgroundColor: Colors.backgroundInput,
     borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: INPUT_PADDING_VERTICAL,
+    paddingHorizontal: INPUT_PADDING_HORIZONTAL,
     color: Colors.textPrimary,
     borderWidth: 1,
     borderColor: Colors.borderLight,
+    fontSize: Fonts.size.sm,
+    fontFamily: FONT_FAMILY,
   },
 
   textInput: {
     backgroundColor: Colors.backgroundInput,
     borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: INPUT_PADDING_VERTICAL,
+    paddingHorizontal: INPUT_PADDING_HORIZONTAL,
     minHeight: 130,
     color: Colors.textPrimary,
     borderWidth: 1,
     borderColor: Colors.borderLight,
+    fontSize: Fonts.size.sm,
+    fontFamily: FONT_FAMILY,
   },
 
   charCount: {
     color: Colors.textSecondary,
     fontSize: Fonts.size.xs,
     textAlign: 'right',
+    fontFamily: FONT_FAMILY,
   },
 
   /* ===== RATING ===== */
@@ -151,16 +198,29 @@ export default StyleSheet.create({
     color: Colors.textPrimary,
     marginBottom: 8,
     fontSize: Fonts.size.sm,
+    fontFamily: FONT_FAMILY,
   },
 
   starsRow: {
     flexDirection: 'row',
   },
 
+  /*
+    Moved from an inline style inside the .map() callback so it is not
+    re-created on every render cycle.
+  */
+  starIcon: {
+    marginHorizontal: 4,
+  },
+
   /* ===== SUBMIT BUTTON ===== */
   submitButton: {
     width: '100%',
     borderRadius: 25,
+    /*
+      overflow: 'hidden' is on the TouchableOpacity so the Android ripple
+      effect is correctly clipped to the border radius.
+    */
     overflow: 'hidden',
     marginTop: Spacing.md,
   },
@@ -170,6 +230,7 @@ export default StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 14,
+    borderRadius: 25,
   },
 
   submitButtonText: {
@@ -177,5 +238,6 @@ export default StyleSheet.create({
     fontWeight: Fonts.weight.medium,
     marginLeft: 8,
     fontSize: Fonts.size.md,
+    fontFamily: FONT_FAMILY,
   },
 });

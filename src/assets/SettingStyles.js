@@ -1,5 +1,5 @@
 /**
- * HomeScreen / Dashboard Styles
+ * SettingStyles.js
  *
  * Safe-area integration:
  *   Install:  yarn add react-native-safe-area-context
@@ -35,10 +35,10 @@ const MIN_TAP_TARGET = 44;
 // ─────────────────────────────────────────────────────────────
 
 /** Outer track dimensions */
-export const TOGGLE_WIDTH    = 56;
-export const TOGGLE_HEIGHT   = 32;
-export const TOGGLE_PADDING  = 3;   // inner padding on each side
-export const TOGGLE_RADIUS   = TOGGLE_HEIGHT / 2;
+export const TOGGLE_WIDTH   = 56;
+export const TOGGLE_HEIGHT  = 32;
+export const TOGGLE_PADDING = 3;   // inner padding on each side
+export const TOGGLE_RADIUS  = TOGGLE_HEIGHT / 2;
 
 /** Knob dimensions */
 export const KNOB_SIZE   = 26;
@@ -170,8 +170,19 @@ export default StyleSheet.create({
    * add it back explicitly rather than duplicating styles.
    */
   container: {
-    flex: 1,
+    flex:            1,
     backgroundColor: Colors.backgroundDark,
+  },
+
+  /**
+   * scrollView: applied to the ScrollView's `style` prop (not contentContainerStyle).
+   * Ensures the scroll view itself fills the remaining screen space.
+   *
+   * Bug fix: this key was referenced in SettingsScreen.js but was missing
+   * from the stylesheet, causing a silent undefined style lookup.
+   */
+  scrollView: {
+    flex: 1,
   },
 
   // ── DRAWER ────────────────────────────────────────────────
@@ -183,7 +194,7 @@ export default StyleSheet.create({
   drawerOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: Colors.overlayDark,
-    zIndex: 98,
+    zIndex:          98,
   },
 
   /**
@@ -197,20 +208,20 @@ export default StyleSheet.create({
    * open/close logic can reference the same value.
    */
   drawerContainer: {
-    position:        'absolute',
-    top:             0,
-    bottom:          0,
-    left:            0,
-    width:           DRAWER_WIDTH,
-    backgroundColor: Colors.backgroundInput,
-    zIndex:          99,
+    position:         'absolute',
+    top:              0,
+    bottom:           0,
+    left:             0,
+    width:            DRAWER_WIDTH,
+    backgroundColor:  Colors.backgroundInput,
+    zIndex:           99,
     borderRightWidth: 1,
     borderRightColor: Colors.borderLight,
     // Shadow: using #000 base color is standard practice.
     // A colored shadow (Colors.primary) is decorative — kept but noted.
     ...Shadows.card,
-    shadowColor:    Colors.primary,  // intentional brand accent shadow
-    shadowOffset:   { width: 4, height: 0 },
+    shadowColor:  Colors.primary,  // intentional brand accent shadow
+    shadowOffset: { width: 4, height: 0 },
   },
 
   /**
@@ -218,7 +229,7 @@ export default StyleSheet.create({
    * Apply getDrawerInsets(insets) here in your component.
    */
   drawerInnerContent: {
-    flex: 1,
+    flex:              1,
     paddingHorizontal: Spacing.md,
   },
 
@@ -331,11 +342,11 @@ export default StyleSheet.create({
    * overflowing into the toggle area on narrow screens.
    */
   securityTitle: {
-    color:      Colors.textPrimary,
-    fontSize:   Fonts.size.md,
-    fontWeight: Fonts.weight.medium,
-    fontFamily: Fonts.family.primary,
-    flexShrink: 1,   // prevents overflow into toggle on narrow screens
+    color:       Colors.textPrimary,
+    fontSize:    Fonts.size.md,
+    fontWeight:  Fonts.weight.medium,
+    fontFamily:  Fonts.family.primary,
+    flexShrink:  1,   // prevents overflow into toggle on narrow screens
     marginRight: Spacing.sm,
   },
 

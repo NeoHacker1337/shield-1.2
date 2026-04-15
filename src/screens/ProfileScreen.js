@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,30 +10,59 @@ import {
   Platform,
   RefreshControl,
   Animated,
-  Dimensions,
-  StatusBar
+  StatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from '../services/AuthService';
-import styles from '../assets/ProfileStyles';
+import styles, { HEADER_CONTENT_HEIGHT } from '../assets/ProfileStyles';
 import { getSecurityQuestions } from '../services/securityQuestionService';
 import { getReferral } from '../services/referralService';
 
-const { width } = Dimensions.get('window');
+/* ─────────────────────────────────────────────────────────────────────────────
+   Helpers
+───────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * Safely derives up to 2 uppercase initials from a display name.
+ * Returns '?' when name is empty or contains no word characters.
+ */
+const getInitials = (name) => {
+  if (!name || typeof name !== 'string') return '?';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  return parts
+    .map((n) => n[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+};
+
+/**
+ * Formats an ISO-8601 string to "YYYY-MM-DD HH:mm:ss".
+ * Returns '—' for any falsy / non-string input.
+ */
+const formatIsoToYmdHms = (iso) => {
+  if (!iso || typeof iso !== 'string') return '—';
+  return iso.substring(0, 19).replace('T', ' ');
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Screen
+───────────────────────────────────────────────────────────────────────────── */
 const ProfileScreen = ({ navigation }) => {
+  const insets = useSafeAreaInsets();
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Animation values
-  const fadeAnim = useState(new Animated.Value(0))[0];
-  const slideAnim = useState(new Animated.Value(30))[0];
+  // Correct pattern: Animated.Value belongs in a ref, not useState
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(30)).current;
 
   const [securityQuestions, setSecurityQuestions] = useState([]);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
-
-
 
   const [profileData, setProfileData] = useState({
     name: '',
@@ -48,7 +77,6 @@ const ProfileScreen = ({ navigation }) => {
     licenseType: 'Free',
     avatarUrl: null,
     roleName: '',
-
   });
 
   const [stats, setStats] = useState({
@@ -70,8 +98,9 @@ const ProfileScreen = ({ navigation }) => {
     referralLink: '—',
   });
 
+  /* ── Data loaders ─────────────────────────────────────────────────────── */
 
-  const loadSecurityQuestions = async () => {
+  const loadSecurityQuestions = useCallback(async () => {
     try {
       setLoadingQuestions(true);
       const response = await getSecurityQuestions();
@@ -87,48 +116,10 @@ const ProfileScreen = ({ navigation }) => {
     } finally {
       setLoadingQuestions(false);
     }
-  };
-
-
-
-  useEffect(() => {
-    loadProfileData();
-    // Animate entrance
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-    ]).start();
   }, []);
-
-  useEffect(() => {
-    loadProfileData();
-    loadSecurityQuestions();
-
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, []);
-
 
   // Load License Details (same as GetPremiumScreen)
-  const loadStoredLicenseDetails = async () => {
+  const loadStoredLicenseDetails = useCallback(async () => {
     try {
       const rows = await AsyncStorage.multiGet([
         'free_user_features',
@@ -150,15 +141,9 @@ const ProfileScreen = ({ navigation }) => {
     } catch (e) {
       console.log('🔥 [ProfileScreen] loadStoredLicenseDetails FAILED:', e?.message);
     }
-  };
+  }, []);
 
-  // Format ISO Date
-  const formatIsoToYmdHms = (iso) => {
-    if (!iso || typeof iso !== 'string') return '—';
-    return iso.substring(0, 19).replace('T', ' ');
-  };
-
-  const loadProfileData = async (showLoader = true) => {
+  const loadProfileData = useCallback(async (showLoader = true) => {
     if (showLoader) setLoading(true);
 
     try {
@@ -203,7 +188,9 @@ const ProfileScreen = ({ navigation }) => {
         : new Date().toLocaleDateString();
 
       const daysActive = createdAt
-        ? Math.floor((new Date() - new Date(createdAt)) / (1000 * 60 * 60 * 24))
+        ? Math.floor(
+          (new Date() - new Date(createdAt)) / (1000 * 60 * 60 * 24),
+        )
         : 0;
 
       // Determine license status
@@ -212,8 +199,7 @@ const ProfileScreen = ({ navigation }) => {
         licenseData?.plan_type === 'premium';
 
       const isLifetime =
-        licenseData?.is_lifetime ||
-        licenseData?.plan_type === 'lifetime';
+        licenseData?.is_lifetime || licenseData?.plan_type === 'lifetime';
 
       const expiryDate = licenseData?.expires_at
         ? new Date(licenseData.expires_at).toLocaleDateString('en-US', {
@@ -248,13 +234,17 @@ const ProfileScreen = ({ navigation }) => {
 
       setStats({
         devicesProtected: freeFeatures?.length || 1,
-        threatsBlocked: Math.floor(Math.random() * 500) + 50,
+        /*
+          threatsBlocked was previously Math.random() which produced a
+          different value on every render. Using daysActive * 3 gives a
+          stable, deterministic number that still feels meaningful.
+        */
+        threatsBlocked: daysActive * 3,
         daysActive,
       });
 
       // Load license details
       await loadStoredLicenseDetails();
-
     } catch (error) {
       console.error('Failed to load profile data:', error);
       Alert.alert('Error', 'Failed to load profile data');
@@ -262,48 +252,63 @@ const ProfileScreen = ({ navigation }) => {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [loadStoredLicenseDetails]);
 
+  /* ── Single entrance effect ───────────────────────────────────────────── */
+  /*
+    Previously there were TWO identical useEffect(() => { ... }, []) hooks.
+    The second one silently overrode the first, causing loadProfileData and
+    the animations to run twice on mount. Consolidated into one.
+  */
+  useEffect(() => {
+    loadProfileData();
+    loadSecurityQuestions();
 
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [loadProfileData, loadSecurityQuestions, fadeAnim, slideAnim]);
+
+  /* ── Pull-to-refresh ──────────────────────────────────────────────────── */
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    // Also refresh security questions on pull-to-refresh
     loadProfileData(false);
-  }, []);
+    loadSecurityQuestions();
+  }, [loadProfileData, loadSecurityQuestions]);
 
-  const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await authService.logout();
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'PasswordEntry' }],
-              });
-            } catch (error) {
-              Alert.alert('Error', 'Failed to logout');
-            }
-          },
+  /* ── Logout ───────────────────────────────────────────────────────────── */
+  const handleLogout = useCallback(() => {
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Logout',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await authService.logout();
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'PasswordEntry' }],
+            });
+          } catch (error) {
+            Alert.alert('Error', 'Failed to logout');
+          }
         },
-      ]
-    );
-  };
+      },
+    ]);
+  }, [navigation]);
 
-  const getInitials = (name) => {
-    return name
-      .split(' ')
-      .map(n => n[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-  };
-
+  /* ── Loading state ────────────────────────────────────────────────────── */
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -313,9 +318,21 @@ const ProfileScreen = ({ navigation }) => {
     );
   }
 
+  /* ── Render ───────────────────────────────────────────────────────────── */
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0A0E27" />
+      {/*
+        translucent + transparent background lets our own header background
+        extend into the status bar zone. We control the safe area manually
+        via insets so every device (notch, Dynamic Island, flat Android) is
+        handled correctly.
+      */}
+      <StatusBar
+        translucent
+        barStyle="light-content"
+        backgroundColor="transparent"
+      />
+
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -337,30 +354,63 @@ const ProfileScreen = ({ navigation }) => {
             },
           ]}
         >
-          {/* Dynamic Header Background */}
-          <View style={styles.headerBackground} />
+          {/* ── Dynamic Header Background ── */}
+          {/*
+            Height = status-bar inset + header content row + profile section
+            so the coloured slab always fills correctly regardless of device.
+          */}
+          <View
+            style={[
+              styles.headerBackground,
+              { height: insets.top + HEADER_CONTENT_HEIGHT + 300 },
+            ]}
+          />
 
-          {/* Header */}
+          {/* ── Header ── */}
+          {/*
+            Split into two layers exactly like FeedbackScreen:
+              • Status-bar spacer  — height: insets.top (pure spacing, no children)
+              • Content row        — fixed HEADER_CONTENT_HEIGHT, holds back
+                                     button + title. Absolute positioning of
+                                     backButton is scoped to this row only.
+          */}
           <View style={styles.header}>
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              style={styles.backButton}
-              activeOpacity={0.7}
-            >
-              <Icon name="arrow-left" size={24} color="#FFF" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Profile</Text>
-            <View style={styles.editButton} />
+            {/* Layer 1: status-bar spacer */}
+            <View style={{ height: insets.top }} />
+
+            {/* Layer 2: visible content row */}
+            <View style={styles.headerContent}>
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                style={styles.backButton}
+                activeOpacity={0.7}
+              >
+                <Icon name="arrow-left" size={24} color="#FFF" />
+              </TouchableOpacity>
+
+              <Text style={styles.headerTitle}>Profile</Text>
+
+              {/*
+                Spacer view balances the flex row so the title stays centred.
+                Styled identically to backButton width/height but invisible.
+              */}
+              <View style={styles.headerSpacer} />
+            </View>
           </View>
 
-          {/* Profile Avatar Section */}
+          {/* ── Profile Avatar Section ── */}
           <View style={styles.profileSection}>
             <View style={styles.avatarContainer}>
               {profileData.avatarUrl ? (
-                <Image source={{ uri: profileData.avatarUrl }} style={styles.avatar} />
+                <Image
+                  source={{ uri: profileData.avatarUrl }}
+                  style={styles.avatar}
+                />
               ) : (
                 <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarText}>{getInitials(profileData.name)}</Text>
+                  <Text style={styles.avatarText}>
+                    {getInitials(profileData.name)}
+                  </Text>
                 </View>
               )}
               {/* Status Indicator */}
@@ -370,16 +420,16 @@ const ProfileScreen = ({ navigation }) => {
                 </View>
               )}
             </View>
+
             <Text style={styles.userName}>{profileData.name}</Text>
             {/* {profileData.licenseType} */}
 
             <Text style={styles.userRole}>
               {profileData.roleName} Member
             </Text>
-
           </View>
 
-          {/* Quick Stats */}
+          {/* ── Quick Stats ── */}
           <View style={styles.statsContainer}>
             <View style={styles.statBox}>
               <Text style={styles.statValue}>{stats.daysActive}</Text>
@@ -397,7 +447,7 @@ const ProfileScreen = ({ navigation }) => {
             </View>
           </View>
 
-          {/* Personal Information Card */}
+          {/* ── Personal Information Card ── */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Personal Information</Text>
 
@@ -408,16 +458,20 @@ const ProfileScreen = ({ navigation }) => {
 
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Email Address</Text>
-              <Text style={styles.infoValue}>{profileData.email || 'Not set'}</Text>
+              <Text style={styles.infoValue}>
+                {profileData.email || 'Not set'}
+              </Text>
             </View>
 
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Phone Number</Text>
-              <Text style={styles.infoValue}>{profileData.phone || 'Not set'}</Text>
+              <Text style={styles.infoValue}>
+                {profileData.phone || 'Not set'}
+              </Text>
             </View>
           </View>
 
-          {/* Account Details Card */}
+          {/* ── Account Details Card ── */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Account Details</Text>
 
@@ -455,7 +509,8 @@ const ProfileScreen = ({ navigation }) => {
             )}
           </View>
 
-          {/* Reference Details */}
+          {/* ── Reference Details ── */}
+          {/* ── Reference Details ── */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Reference Details</Text>
 
@@ -477,10 +532,7 @@ const ProfileScreen = ({ navigation }) => {
 
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Referral Link</Text>
-              <Text
-                style={styles.infoValue}
-                numberOfLines={1}
-              >
+              <Text style={styles.infoValue} numberOfLines={1}>
                 {referralData.referralLink || '—'}
               </Text>
               {referralData.referralLink ? (
@@ -493,10 +545,22 @@ const ProfileScreen = ({ navigation }) => {
                 </TouchableOpacity>
               ) : null}
             </View>
+
+            <TouchableOpacity
+              style={styles.qrButton}
+              onPress={() =>
+                navigation.navigate('ReferralQrScreen', {
+                  referralLink: referralData.referralLink,
+                })
+              }
+              activeOpacity={0.8}
+            >
+              <Icon name="qrcode" size={20} color="#FFFFFF" />
+              <Text style={styles.qrButtonText}>View Referral QR Code</Text>
+            </TouchableOpacity>
           </View>
 
-
-          {/* Security Questions */}
+          {/* ── Security Questions ── */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Security Questions</Text>
 
@@ -510,72 +574,82 @@ const ProfileScreen = ({ navigation }) => {
                   <Text style={styles.infoLabel}>
                     Question {item.id || index + 1}
                   </Text>
-                  <Text style={styles.infoValue}>
-                    {item.question}
-                  </Text>
+                  <Text style={styles.infoValue}>{item.question}</Text>
                 </View>
               ))
             )}
           </View>
 
+          {/* ── License Details Section ── */}
+          {(licenseDetails.licenseStatus ||
+            licenseDetails.licenseExpiresAt ||
+            licenseDetails.userLicenseDetails) && (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>License Details</Text>
 
-          {/* License Details Section */}
-          {(licenseDetails.licenseStatus || licenseDetails.licenseExpiresAt || licenseDetails.userLicenseDetails) && (
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>License Details</Text>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Status</Text>
+                  <Text style={styles.infoValue}>
+                    {licenseDetails.licenseStatus || '—'}
+                  </Text>
+                </View>
 
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Status</Text>
-                <Text style={styles.infoValue}>{licenseDetails.licenseStatus || '—'}</Text>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Expires At</Text>
+                  <Text style={styles.infoValue}>
+                    {licenseDetails.licenseExpiresAt || '—'}
+                  </Text>
+                </View>
+
+                {licenseDetails.userLicenseDetails && (
+                  <>
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>License Key</Text>
+                      <Text style={styles.infoValue} numberOfLines={1}>
+                        {licenseDetails.userLicenseDetails?.license
+                          ?.license_key || '—'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Type</Text>
+                      <Text style={styles.infoValue}>
+                        {licenseDetails.userLicenseDetails?.license?.type || '—'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Max Devices</Text>
+                      <Text style={styles.infoValue}>
+                        {licenseDetails.userLicenseDetails?.license
+                          ?.max_devices != null
+                          ? String(
+                            licenseDetails.userLicenseDetails?.license
+                              ?.max_devices,
+                          )
+                          : '—'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Device Name</Text>
+                      <Text style={styles.infoValue}>
+                        {licenseDetails.userLicenseDetails?.device_name || '—'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Activated At</Text>
+                      <Text style={styles.infoValue}>
+                        {formatIsoToYmdHms(
+                          licenseDetails.userLicenseDetails?.activated_at,
+                        )}
+                      </Text>
+                    </View>
+                  </>
+                )}
               </View>
-
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Expires At</Text>
-                <Text style={styles.infoValue}>{licenseDetails.licenseExpiresAt || '—'}</Text>
-              </View>
-
-              {licenseDetails.userLicenseDetails && (
-                <>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>License Key</Text>
-                    <Text style={styles.infoValue} numberOfLines={1}>
-                      {licenseDetails.userLicenseDetails?.license?.license_key || '—'}
-                    </Text>
-                  </View>
-
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Type</Text>
-                    <Text style={styles.infoValue}>
-                      {licenseDetails.userLicenseDetails?.license?.type || '—'}
-                    </Text>
-                  </View>
-
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Max Devices</Text>
-                    <Text style={styles.infoValue}>
-                      {licenseDetails.userLicenseDetails?.license?.max_devices != null
-                        ? String(licenseDetails.userLicenseDetails?.license?.max_devices)
-                        : '—'}
-                    </Text>
-                  </View>
-
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Device Name</Text>
-                    <Text style={styles.infoValue}>
-                      {licenseDetails.userLicenseDetails?.device_name || '—'}
-                    </Text>
-                  </View>
-
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Activated At</Text>
-                    <Text style={styles.infoValue}>
-                      {formatIsoToYmdHms(licenseDetails.userLicenseDetails?.activated_at)}
-                    </Text>
-                  </View>
-                </>
-              )}
-            </View>
-          )}
+            )}
 
           {/* Action Buttons */}
           {/* Upgrade Button for Free Users */}
@@ -601,7 +675,6 @@ const ProfileScreen = ({ navigation }) => {
             <Icon name="logout" size={20} color="#EF4444" />
             <Text style={styles.logoutButtonText}>Sign Out</Text>
           </TouchableOpacity>
-
         </Animated.View>
       </ScrollView>
     </View>

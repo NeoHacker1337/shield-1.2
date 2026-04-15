@@ -3,14 +3,12 @@ import {
   View,
   Text,
   Image,
-  StyleSheet,
   SafeAreaView,
   StatusBar,
   TouchableOpacity,
   ScrollView,
   Animated,
   Linking,
-  Dimensions,
   Platform,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -19,8 +17,6 @@ import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 import styles from '../assets/AboutUsStyles';
-
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 const AboutUsScreen = () => {
   const navigation = useNavigation();
@@ -93,6 +89,10 @@ const AboutUsScreen = () => {
     >
       <StatusBar barStyle="light-content" backgroundColor="#020617" />
 
+      {/*
+        LinearGradient is kept intentionally for future gradient customisation.
+        Currently renders as a solid background matching the app's dark theme.
+      */}
       <LinearGradient
         colors={['#020617', '#020617', '#020617']}
         start={{ x: 0, y: 0 }}
@@ -100,18 +100,23 @@ const AboutUsScreen = () => {
         style={styles.gradientContainer}
       >
         {/* Header */}
-        <View style={styles.header}>
+        <View
+          style={[
+            styles.header,
+            { paddingTop: Platform.OS === 'ios' ? insets.top : 12 },
+          ]}
+        >
           <TouchableOpacity
             onPress={() => navigation.goBack()}
             style={styles.backButton}
             activeOpacity={0.85}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Icon
-              name={Platform.OS === 'ios' ? 'arrow-back-ios' : 'arrow-back'}
-              size={20}
-              color="#E5E7EB"
-            />
+            {/*
+              MaterialIcons does not include 'arrow-back-ios'.
+              'arrow-back' works correctly on both platforms.
+            */}
+            <Icon name="arrow-back" size={20} color="#E5E7EB" />
           </TouchableOpacity>
 
           <Text style={styles.headerTitle}>About Us</Text>
@@ -133,6 +138,11 @@ const AboutUsScreen = () => {
           >
             {/* Logo + glow */}
             <View style={styles.logoContainer}>
+              {/*
+                glowEffect uses opacity/scale animations only (no zIndex: -1 at
+                runtime) — the element is rendered before logoBackground so it
+                sits visually behind it in the natural stacking order.
+              */}
               <Animated.View
                 style={[
                   styles.glowEffect,
@@ -156,7 +166,7 @@ const AboutUsScreen = () => {
               <View style={styles.logoBackground}>
                 <Image
                   source={require('../assets/shield-logo.png')}
-                  style={{ width: 40, height: 40, resizeMode: 'contain' }}
+                  style={styles.logoImage}
                 />
               </View>
             </View>
