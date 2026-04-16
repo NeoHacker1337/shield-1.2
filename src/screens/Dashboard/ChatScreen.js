@@ -101,19 +101,27 @@ const SwipeableMessageRow = memo(
       }).start();
     }, [translateX]);
 
+
+    // Slide Righ + Left Side Tag Reply
     const panResponder = useRef(
       PanResponder.create({
         onMoveShouldSetPanResponder: (_, g) =>
-          g.dx > 8 && Math.abs(g.dy) < 20,
+          Math.abs(g.dx) > 8 && Math.abs(g.dy) < 20,
 
         onPanResponderMove: (_, g) => {
-          if (g.dx > 0) {
-            translateX.setValue(Math.min(g.dx, MAX_SWIPE_DISTANCE));
+          // Allow both directions
+          if (g.dx !== 0) {
+            const clamped = Math.max(
+              -MAX_SWIPE_DISTANCE,
+              Math.min(g.dx, MAX_SWIPE_DISTANCE)
+            );
+            translateX.setValue(clamped);
           }
         },
 
         onPanResponderRelease: (_, g) => {
-          if (g.dx >= SWIPE_THRESHOLD) {
+          // Trigger reply on BOTH sides
+          if (Math.abs(g.dx) >= SWIPE_THRESHOLD) {
             startReply(item);
           }
           resetPosition();
@@ -129,6 +137,18 @@ const SwipeableMessageRow = memo(
       extrapolate: 'clamp',
     });
 
+    const replyIconOpacityLeft = translateX.interpolate({
+      inputRange: [0, SWIPE_THRESHOLD],
+      outputRange: [0, 1],
+      extrapolate: 'clamp',
+    });
+
+    const replyIconOpacityRight = translateX.interpolate({
+      inputRange: [-SWIPE_THRESHOLD, 0],
+      outputRange: [1, 0],
+      extrapolate: 'clamp',
+    });
+
     return (
       <>
         {showDate && (
@@ -140,12 +160,29 @@ const SwipeableMessageRow = memo(
         )}
 
         <View style={{ position: 'relative' }}>
+
+
+          {/* LEFT SIDE ICON (already موجود) */}
           <Animated.View
             style={{
               position: 'absolute',
               left: 8,
               top: '50%',
               opacity: replyIconOpacity,
+              zIndex: 0,
+              marginTop: -10,
+            }}
+          >
+            <Icon name="reply" size={20} color="#075E54" />
+          </Animated.View>
+
+          {/* ✅ ADD THIS RIGHT SIDE ICON HERE */}
+          <Animated.View
+            style={{
+              position: 'absolute',
+              right: 8,
+              top: '50%',
+              opacity: replyIconOpacityRight,
               zIndex: 0,
               marginTop: -10,
             }}
@@ -202,7 +239,8 @@ const ChatScreen = ({ route, navigation }) => {
   const isRecordingRef = useRef(false);
   const mountedRef = useRef(true);
 
-  const { isKeyboardVisible } = useKeyboard();
+  // ✅ FIX 1: Destructure keyboardHeight too
+  const { isKeyboardVisible, keyboardHeight } = useKeyboard();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -540,11 +578,16 @@ const ChatScreen = ({ route, navigation }) => {
     );
   };
 
+  const reversedMessages = React.useMemo(
+    () => [...messages].reverse(),
+    [messages]
+  );
+
   const renderMessageItem = useCallback(
     ({ item, index }) => {
       if (!item || !item.id) return null;
 
-      const prevItem = messages[messages.length - 1 - (index + 1)] || null;
+      const prevItem = reversedMessages[index + 1] || null;
 
       return (
         <SwipeableMessageRow
@@ -569,7 +612,7 @@ const ChatScreen = ({ route, navigation }) => {
       );
     },
     [
-      messages,
+      reversedMessages,
       currentUser,
       startReply,
       handleMessageLongPress,
@@ -606,6 +649,9 @@ const ChatScreen = ({ route, navigation }) => {
   const avatarChar = getContactAvatar(displayName);
   const avatarColor = getAvatarColor(displayName);
   const isOnline = getOnlineStatus();
+
+  // ✅ FIX 2: Compute bottom padding — only apply safe area when keyboard is HIDDEN
+  const bottomPadding = isKeyboardVisible ? 0 : insets.bottom;
 
   const renderEmojiPicker = () => {
     if (!showEmojiPicker) return null;
@@ -851,19 +897,28 @@ const ChatScreen = ({ route, navigation }) => {
     );
   };
 
+  // ═══════════════════════════════════════════════════════════
+  // ✅ FIXED RETURN — Layout changes only
+  // ═══════════════════════════════════════════════════════════
+
   return (
-    <SafeAreaView
-      edges={['top', 'bottom']}
-      style={{ flex: 1, backgroundColor: '#075E54' }}
-    >
+    // ✅ FIX 3: Plain View instead of SafeAreaView
+    //    SafeAreaView bottom edge was conflicting with KeyboardAvoidingView
+    <View style={{ flex: 1, backgroundColor: '#075E54' }}>
       <StatusBar backgroundColor="#075E54" barStyle="light-content" />
 
+      {/* ✅ FIX 4: Manual top safe area spacer */}
+      <View style={{ height: insets.top, backgroundColor: '#075E54' }} />
+
+      {/* ✅ FIX 5: Platform-specific KAV behavior + correct offset */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={0}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
       >
         <View style={{ flex: 1, backgroundColor: '#ECE5DD' }}>
+          {/* ─── Header (unchanged) ─── */}
+
           <View style={styles.header}>
             <TouchableOpacity
               onPress={() => navigation.goBack()}
@@ -872,7 +927,31 @@ const ChatScreen = ({ route, navigation }) => {
               <Icon name="arrow-back" size={24} color="#FFFFFF" />
             </TouchableOpacity>
 
-            <View style={styles.headerContent}>
+            {/* ✅ Changed View → TouchableOpacity to navigate to ContactProfile */}
+            <TouchableOpacity
+              style={styles.headerContent}
+              activeOpacity={0.7}
+              onPress={() => {
+                navigation.navigate('ContactProfile', {
+                  displayName,
+                  phoneNumber:
+                    chatRoom?.phone_number ||
+                    chatRoom?.participants?.find(
+                      p => p.id !== currentUser?.id
+                    )?.phone_number ||
+                    '',
+                  avatarColor,
+                  avatarChar,
+                  avatarUrl:
+                    chatRoom?.participants?.find(
+                      p => p.id !== currentUser?.id
+                    )?.avatar_url || null,
+                  isOnline,
+                  chatRoom,
+                  currentUser,
+                });
+              }}
+            >
               <View style={styles.headerAvatarContainer}>
                 <View
                   style={[
@@ -892,7 +971,7 @@ const ChatScreen = ({ route, navigation }) => {
                   {isOnline ? 'Online' : 'Last seen recently'}
                 </Text>
               </View>
-            </View>
+            </TouchableOpacity>
 
             <View style={styles.headerActions}>
               <TouchableOpacity
@@ -904,6 +983,7 @@ const ChatScreen = ({ route, navigation }) => {
             </View>
           </View>
 
+          {/* ─── Messages Area (unchanged) ─── */}
           <View style={{ flex: 1, backgroundColor: '#ECE5DD' }}>
             {showNewMessageBadge && (
               <TouchableOpacity
@@ -926,23 +1006,14 @@ const ChatScreen = ({ route, navigation }) => {
             ) : (
               <FlatList
                 ref={flatListRef}
-                data={[...messages].reverse()}
+                data={reversedMessages}
                 renderItem={renderMessageItem}
                 keyExtractor={(item, index) =>
                   item.id ? item.id.toString() : `temp-${index}`
                 }
                 inverted
                 extraData={currentUser}
-                contentContainerStyle={[
-                  styles.messageList,
-                  {
-                    paddingBottom: showEmojiPicker
-                      ? Math.max(insets.bottom, 2)
-                      : isKeyboardVisible
-                        ? 0
-                        : 4,
-                  },
-                ]}
+                contentContainerStyle={styles.messageList}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode={
                   Platform.OS === 'ios' ? 'interactive' : 'on-drag'
@@ -968,16 +1039,23 @@ const ChatScreen = ({ route, navigation }) => {
                     </Text>
                   </View>
                 }
+                // ✅ FIX 6: Prevents iOS content inset conflicts
+                automaticallyAdjustContentInsets={false}
               />
             )}
           </View>
 
+          {/* ─── Emoji Picker (unchanged) ─── */}
           {renderEmojiPicker()}
 
+          {/* ✅ FIX 7: Input wrapper with conditional bottom padding */}
           <View
             style={[
               styles.bottomInputWrapper,
-              { paddingBottom: 0 },
+              {
+                paddingBottom: bottomPadding,
+                backgroundColor: '#ECE5DD',
+              },
             ]}
           >
             {renderInputRow()}
@@ -985,6 +1063,7 @@ const ChatScreen = ({ route, navigation }) => {
         </View>
       </KeyboardAvoidingView>
 
+      {/* ─── All Modals (unchanged) ─── */}
       <Modal
         visible={showOptionsMenu}
         transparent
@@ -1168,7 +1247,7 @@ const ChatScreen = ({ route, navigation }) => {
           )}
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 };
 

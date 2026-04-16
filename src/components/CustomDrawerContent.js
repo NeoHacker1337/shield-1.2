@@ -228,7 +228,7 @@ const CustomDrawerContent = ({ navigation, onClose }) => {
 
       {/* ── Footer ─────────────────────────────────────────────────────── */}
       <View style={styles.drawerFooter}>
-        <Text style={styles.versionText}>v1.2.0</Text>
+        <Text style={styles.versionText}>v1.2.1</Text>
         <Text style={styles.copyrightText}>
           © {CURRENT_YEAR} Shield Security
         </Text>

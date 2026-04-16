@@ -5,47 +5,47 @@ import { StyleSheet, Platform } from 'react-native';
 // To retheme the app, update only this section.
 const COLORS = {
   // Brand
-  primaryDark:    '#075E54',   // Header, accents
-  primaryMid:     '#128C7E',   // File container, audio
-  primaryLight:   '#25D366',   // Send button, online dot
-  primarySend:    '#00897B',   // Send button background
+  primaryDark: '#075E54',   // Header, accents
+  primaryMid: '#128C7E',   // File container, audio
+  primaryLight: '#25D366',   // Send button, online dot
+  primarySend: '#00897B',   // Send button background
 
   // Chat backgrounds
-  bgApp:          '#ECE5DD',   // Main chat background
-  bgSent:         '#DCF8C6',   // Sent message bubble
-  bgReceived:     '#FFFFFF',   // Received message bubble
-  bgInput:        '#F0F0F0',   // Input area background
-  bgTextInput:    '#FFFFFF',   // Text field background
+  bgApp: '#ECE5DD',   // Main chat background
+  bgSent: '#DCF8C6',   // Sent message bubble
+  bgReceived: '#FFFFFF',   // Received message bubble
+  bgInput: '#F0F0F0',   // Input area background
+  bgTextInput: '#FFFFFF',   // Text field background
 
   // Text
-  textPrimary:    '#000000',
-  textSecondary:  '#667781',
-  textMuted:      '#888888',
-  textWhite:      '#FFFFFF',
-  textDanger:     '#DC2626',
-  textDangerAlt:  '#e53935',
+  textPrimary: '#000000',
+  textSecondary: '#667781',
+  textMuted: '#888888',
+  textWhite: '#FFFFFF',
+  textDanger: '#DC2626',
+  textDangerAlt: '#e53935',
 
   // UI chrome
-  divider:        '#E1E1E1',
-  dividerLight:   '#f0f0f0',
-  dividerHeavy:   '#E5E5E5',
-  disabled:       '#BDBDBD',
-  subtitleGreen:  '#B8E6B8',
+  divider: '#E1E1E1',
+  dividerLight: '#f0f0f0',
+  dividerHeavy: '#E5E5E5',
+  disabled: '#BDBDBD',
+  subtitleGreen: '#B8E6B8',
 
   // Recording
-  recordBg:       '#FFF5F5',
-  recordBorder:   '#FFCCCC',
-  recordDot:      '#e53935',
+  recordBg: '#FFF5F5',
+  recordBorder: '#FFCCCC',
+  recordDot: '#e53935',
 
   // Media / dark overlays
-  mediaDark:      '#1a1a1a',
-  mediaError:     '#2a2a2a',
-  overlayDark:    'rgba(0,0,0,0.95)',
-  overlayMid:     'rgba(0,0,0,0.55)',
-  overlayLight:   'rgba(0,0,0,0.3)',
-  overlayTint:    'rgba(0,0,0,0.15)',
-  overlayModal:   'rgba(0,0,0,0.5)',
-  overlayModalAlt:'rgba(0,0,0,0.4)',
+  mediaDark: '#1a1a1a',
+  mediaError: '#2a2a2a',
+  overlayDark: 'rgba(0,0,0,0.95)',
+  overlayMid: 'rgba(0,0,0,0.55)',
+  overlayLight: 'rgba(0,0,0,0.3)',
+  overlayTint: 'rgba(0,0,0,0.15)',
+  overlayModal: 'rgba(0,0,0,0.5)',
+  overlayModalAlt: 'rgba(0,0,0,0.4)',
 };
 
 const styles = StyleSheet.create({
@@ -1074,6 +1074,28 @@ const styles = StyleSheet.create({
     color: COLORS.textWhite,
     fontSize: 13,
     fontWeight: '600',
+  },
+
+  dateSeparator: {
+    alignSelf: 'center',
+    backgroundColor: '#E1F2FB',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    marginVertical: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+
+  dateSeparatorText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#1A6C54',
+    textAlign: 'center',
+    letterSpacing: 0.2,
   },
 
 });

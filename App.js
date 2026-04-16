@@ -41,6 +41,7 @@ import AllInvitationsScreen from './src/screens/Dashboard/AllInvitationsScreen';
 import ScanScreen from './src/screens/Dashboard/ScanScreen';
 import ReferralQrScreen from './src/screens/ReferralQrScreen';
 import ShareProfileScreen from './src/screens/ShareProfileScreen'
+import ContactProfileScreen from './src/screens/ContactProfileScreen';
 const Stack = createNativeStackNavigator();
 
 const ONBOARDING_KEY = 'shield_onboarding_completed';
@@ -173,6 +174,7 @@ const App = () => {
             <Stack.Screen name="Scan" component={ScanScreen} options={{ headerShown: false }} />
             <Stack.Screen name="ReferralQrScreen" component={ReferralQrScreen} options={{ headerShown: false }} />
             <Stack.Screen name="ShareProfileScreen" component={ShareProfileScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="ContactProfile" component={ContactProfileScreen} options={{ headerShown: false }} />
           </Stack.Navigator>
         </NavigationContainer>
       </SecurityVisibilityProvider>
