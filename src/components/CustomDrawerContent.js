@@ -11,7 +11,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { CommonActions } from '@react-navigation/native';
 import authService from '../services/AuthService';
 import { Colors, Fonts, Spacing, Radii } from '../assets/theme';
-
+import AsyncStorage from '@react-native-async-storage/async-storage';
 // ─────────────────────────────────────────────────────────────────────────────
 // MODULE-LEVEL CONSTANTS
 // Defined outside the component so they are never recreated on re-render.
@@ -24,18 +24,19 @@ import { Colors, Fonts, Spacing, Radii } from '../assets/theme';
  * To re-enable Get Premium, uncomment the first entry.
  */
 const DRAWER_ITEMS = [
-  // { label: 'Get Premium', icon: 'star', screen: 'GetPremium' },
-  { label: 'Profile',   icon: 'person',   screen: 'Profile'   },
-  { label: 'Settings',  icon: 'settings', screen: 'Settings'  },
-  { label: 'Feedback',  icon: 'feedback', screen: 'Feedback'  },
-  { label: 'About Us',  icon: 'info',     screen: 'AboutUs'   },
+  { label: 'Profile', icon: 'person', screen: 'Profile' },
+  { label: 'Referral', icon: 'qr-code', screen: 'ReferralQrScreen' },
+  { label: 'Share Profile', icon: 'share', screen: 'ShareProfileScreen' },
+  { label: 'Settings', icon: 'settings', screen: 'Settings' },
+  { label: 'Feedback', icon: 'feedback', screen: 'Feedback' },
+  { label: 'About Us', icon: 'info', screen: 'AboutUs' },
 ];
 
 /**
  * Logo resolved once at module load — `require` is a bundle-time operation
  * but the assignment still runs on every render if placed inside the component.
  */
-const LOGO_IMAGE  = require('../assets/shield-logo.png');
+const LOGO_IMAGE = require('../assets/shield-logo.png');
 
 /**
  * Copyright year — computed once, not on every render.
@@ -71,10 +72,37 @@ const CustomDrawerContent = ({ navigation, onClose }) => {
    * useCallback: stable reference — not strictly required here but
    * prevents unnecessary re-creation if parent passes it as a dep.
    */
-  const handleItemPress = useCallback((screen) => {
-    // Close the animated drawer first, then navigate
+  const handleItemPress = useCallback(async (screen) => {
     if (onClose) onClose();
+
+    // ✅ Special handling for Referral
+    if (screen === 'ReferralQrScreen') {
+      try {
+        const localData = await AsyncStorage.getItem('referral_data');
+        let referralLink = '';
+
+        if (localData) {
+          const parsed = JSON.parse(localData);
+          referralLink =
+            parsed?.referral_link ||
+            parsed?.referralLink ||
+            parsed?.link ||
+            '';
+        }
+
+        navigation.navigate('ReferralQrScreen', {
+          referralLink,
+        });
+
+        return;
+      } catch (error) {
+        console.error('❌ Drawer referral load error:', error.message);
+      }
+    }
+
+    // default navigation
     navigation.navigate(screen);
+
   }, [navigation, onClose]);
 
   /**
@@ -92,19 +120,19 @@ const CustomDrawerContent = ({ navigation, onClose }) => {
       'Are you sure you want to logout?',
       [
         {
-          text:  'Cancel',
+          text: 'Cancel',
           style: 'cancel',
         },
         {
-          text:    'Logout',
-          style:   'destructive',
+          text: 'Logout',
+          style: 'destructive',
           onPress: async () => {
             // Close drawer immediately so it doesn't linger during logout
             if (onClose) onClose();
 
             try {
               // Race logout against a 3-second timeout
-              const logoutPromise  = authService.logout();
+              const logoutPromise = authService.logout();
               const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('Logout timed out')), 3000),
               );
@@ -116,7 +144,7 @@ const CustomDrawerContent = ({ navigation, onClose }) => {
               // Always navigate to login — even if logout service fails
               navigation.dispatch(
                 CommonActions.reset({
-                  index:  0,
+                  index: 0,
                   routes: [{ name: 'PasswordEntry' }],
                 }),
               );
@@ -220,39 +248,39 @@ export default CustomDrawerContent;
 const styles = StyleSheet.create({
 
   drawerContent: {
-    flex:            1,
+    flex: 1,
     backgroundColor: Colors.backgroundInput,   // was: '#1E1E1E'
   },
 
   drawerHeader: {
-    alignItems:    'center',
+    alignItems: 'center',
     paddingBottom: Spacing.lg,                 // was: 20
-    paddingTop:    Spacing.sm,                 // was: 10
+    paddingTop: Spacing.sm,                 // was: 10
   },
 
   logo: {
-    width:  50,
+    width: 50,
     height: 50,
   },
 
   drawerTitle: {
-    color:      Colors.textPrimary,            // was: '#FFFFFF'
-    fontSize:   Fonts.size.xxl,               // was: 24
+    color: Colors.textPrimary,            // was: '#FFFFFF'
+    fontSize: Fonts.size.xxl,               // was: 24
     fontWeight: Fonts.weight.bold,
     fontFamily: Fonts.family.primary,
-    marginTop:  Spacing.sm,                   // was: 10
+    marginTop: Spacing.sm,                   // was: 10
   },
 
   divider: {
-    height:          1,
+    height: 1,
     backgroundColor: Colors.borderLight,       // was: '#333'
-    marginVertical:  Spacing.sm,              // was: 10
+    marginVertical: Spacing.sm,              // was: 10
   },
 
   drawerItem: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    paddingVertical:  Spacing.md - Spacing.xs, // 12 — between sm(8) and md(16)
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.md - Spacing.xs, // 12 — between sm(8) and md(16)
     paddingHorizontal: Spacing.lg,             // was: 20
   },
 
@@ -261,8 +289,8 @@ const styles = StyleSheet.create({
   },
 
   drawerItemText: {
-    color:      Colors.textPrimary,            // was: '#FFFFFF'
-    fontSize:   Fonts.size.md,                // was: 16
+    color: Colors.textPrimary,            // was: '#FFFFFF'
+    fontSize: Fonts.size.md,                // was: 16
     fontFamily: Fonts.family.primary,
   },
 
@@ -271,27 +299,27 @@ const styles = StyleSheet.create({
   },
 
   logoutText: {
-    color:      Colors.danger,                // was: '#FF5252'
-    fontSize:   Fonts.size.md,               // was: 16
+    color: Colors.danger,                // was: '#FF5252'
+    fontSize: Fonts.size.md,               // was: 16
     fontWeight: Fonts.weight.bold,
     fontFamily: Fonts.family.primary,
   },
 
   drawerFooter: {
-    padding:    Spacing.lg,                   // was: 20
+    padding: Spacing.lg,                   // was: 20
     alignItems: 'center',
   },
 
   versionText: {
-    color:      Colors.textSecondary,         // was: '#9E9E9E'
-    fontSize:   Fonts.size.xs,               // was: 12
+    color: Colors.textSecondary,         // was: '#9E9E9E'
+    fontSize: Fonts.size.xs,               // was: 12
     fontFamily: Fonts.family.primary,
   },
 
   copyrightText: {
-    color:      Colors.textSecondary,         // was: '#9E9E9E'
-    fontSize:   Fonts.size.xs,               // was: 12
+    color: Colors.textSecondary,         // was: '#9E9E9E'
+    fontSize: Fonts.size.xs,               // was: 12
     fontFamily: Fonts.family.primary,
-    marginTop:  Spacing.xs + 1,              // was: 5
+    marginTop: Spacing.xs + 1,              // was: 5
   },
 });

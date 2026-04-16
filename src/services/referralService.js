@@ -19,7 +19,16 @@ export const getReferral = async () => {
       throw new Error(data?.message || 'Failed to fetch referral');
     }
 
+    // ✅ Store referral data locally
+    await AsyncStorage.setItem(
+  'referral_data',
+  JSON.stringify({
+    referralLink: data.referral_link,  
+  })
+);
+
     return data;
+
   } catch (error) {
     console.error('❌ Referral API error:', error.message);
     throw error;
