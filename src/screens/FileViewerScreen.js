@@ -269,7 +269,7 @@ const FileViewerScreen = ({ route, navigation }) => {
     };
 
     if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(checkFileChanges, 5000);
+    intervalRef.current = setInterval(checkFileChanges, 3000);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);

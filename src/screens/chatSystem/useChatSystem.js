@@ -74,6 +74,8 @@ export default function useChatSystem(navigation) {
   const prevRoomIdsRef = useRef('');
   const lastFetchRef = useRef(0);
 
+  const [contactDisplayNames, setContactDisplayNames] = useState({});
+
   // ✅ Stable ref to always hold the latest chatRooms — avoids stale closures
   //    in async callbacks (e.g. 409 handler) without adding chatRooms to deps
   const chatRoomsRef = useRef(chatRooms);
@@ -81,6 +83,26 @@ export default function useChatSystem(navigation) {
 
   // ✅ Debounce timer ref for handleChatSearch
   const searchDebounceRef = useRef(null);
+
+
+  // Add this function
+const resolveContactNames = useCallback(async (rooms) => {
+  const results = {};
+  for (const room of rooms) {
+    const phoneNumber = room?.contact?.phone || room?.phone || '';
+    const serverName = getDisplayNameFromChatRoom(room, currentUser);
+    const resolved = await authService.getContactDisplayName(phoneNumber, serverName);
+    results[room.id] = resolved;
+  }
+  setContactDisplayNames(results);
+}, [currentUser]);
+
+// Call it when rooms load
+useEffect(() => {
+  if (sortedRooms?.length > 0) {
+    resolveContactNames(sortedRooms);
+  }
+}, [sortedRooms]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // EFFECT 1 — Restore roomMeta from AsyncStorage on mount (RUNS FIRST)
@@ -283,7 +305,7 @@ export default function useChatSystem(navigation) {
             // silent
           }
         }
-      }, 5000);
+      }, 3000);
 
       return () => {
         isFocusedRef.current = false;
@@ -841,6 +863,7 @@ export default function useChatSystem(navigation) {
     // ✅ searchQuery returned once (was duplicated)
     openSearch, closeSearch, handleChatSearch,
     filteredRooms, showLockedChats,
-    setShowLockedChats, getDisplayNameFromChatRoom
+    setShowLockedChats, getDisplayNameFromChatRoom ,
+    contactDisplayNames
   };
 }

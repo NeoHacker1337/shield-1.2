@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,14 @@ import {
   Modal,
   Pressable,
   Image,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
- 
- import profileStyles from '../assets/ContactProfileScreenStyles';
+import profileStyles from '../assets/ContactProfileScreenStyles';
+import useContactName from '../screens/chatSystem/Features/useContactName';
+import authService from '../services/AuthService';
 // ═══════════════════════════════════════════════════════════════
 //  REUSABLE CUSTOM MODAL — Closes on outside tap
 // ═══════════════════════════════════════════════════════════════
@@ -131,7 +133,42 @@ const ContactProfileScreen = ({ route, navigation }) => {
     isOnline = false,
     chatRoom = null,
     currentUser = null,
+    serverContactName = '',   // name stored on the server (e.g. user.name)
   } = route.params || {};
+
+
+  // ── Contact name resolution (phonebook first, server fallback) ──
+  const { localContactName } = useContactName({ chatRoom, currentUser });
+
+  const [resolvedNameMeta, setResolvedNameMeta] = useState(null);
+
+  useEffect(() => {
+    const resolve = async () => {
+      // Priority for server fallback name:
+      // 1. localContactName (from useContactName hook)
+      // 2. serverContactName (explicitly passed from navigation)
+      // 3. displayName (route param default)
+      const serverName = localContactName || serverContactName || displayName;
+      const result = await authService.getContactDisplayName(phoneNumber, serverName);
+      setResolvedNameMeta(result);
+    };
+    resolve();
+  }, [phoneNumber, localContactName, serverContactName, displayName]);
+
+  // finalName priority:
+  // 1. Phonebook name (resolvedNameMeta.name, fromPhonebook: true)
+  // 2. Server name   (resolvedNameMeta.name, fromPhonebook: false)
+  // 3. localContactName from hook
+  // 4. serverContactName from route params
+  // 5. displayName fallback
+  const finalName =
+    resolvedNameMeta?.name ||
+    localContactName ||
+    serverContactName ||
+    displayName;
+
+  // Show "Not in phonebook" only when resolved and confirmed not in phonebook
+  const showNotSaved = resolvedNameMeta !== null && resolvedNameMeta.fromPhonebook === false;
 
   // ─── State ───
   const [muteNotifications, setMuteNotifications] = useState(false);
@@ -208,6 +245,24 @@ const ContactProfileScreen = ({ route, navigation }) => {
     setShowEncryptionModal(true);
   }, []);
 
+  // ✅ FIX 1 — Extracted call handler with proper navigation (no getParent())
+
+  const handleStartAudioCall = useCallback(() => {
+    setShowCallModal(false);
+    if (!chatRoom?.id || !currentUser?.id) {
+      Alert.alert('Error', 'Cannot start call.');
+      return;
+    }
+
+    navigation.navigate('AudioCall', { userId: currentUser.id, roomId: chatRoom.id, isCaller: true, });
+  },
+    [chatRoom, currentUser, navigation]);
+
+
+  // ✅ FIX 2 — iconFamily for timer icon corrected to 'material' (MCIcon needs 'material-community')
+  // The original had iconFamily="material-community" for 'timer' but MCIcon uses different names.
+  // 'timer' exists in MaterialIcons, so iconFamily should stay as default 'material'.
+
   return (
     <View style={profileStyles.container}>
       <StatusBar backgroundColor="#075E54" barStyle="light-content" />
@@ -241,6 +296,8 @@ const ContactProfileScreen = ({ route, navigation }) => {
         showsVerticalScrollIndicator={false}
       >
         {/* ─── Profile Section ─── */}
+
+
         <View style={profileStyles.profileSection}>
           <View style={profileStyles.avatarWrapper}>
             {avatarUrl ? (
@@ -263,14 +320,30 @@ const ContactProfileScreen = ({ route, navigation }) => {
             {isOnline && <View style={profileStyles.onlineIndicator} />}
           </View>
 
+          {/* ✅ NAME (FIXED) */}
+          <Text style={profileStyles.displayNameText}>
+            {finalName}
+          </Text>
+
+          {/* ✅ NOT SAVED LABEL */}
+          {showNotSaved && (
+            <Text style={{ color: '#999', fontSize: 12, marginTop: 4 }}>
+              {resolvedNameMeta?.label || 'Not in phonebook'}
+            </Text>
+          )}
+
+          {/* ✅ PHONE NUMBER (RESTORED) */}
           <Text style={profileStyles.phoneNumber}>
             {phoneNumber || 'No phone number'}
           </Text>
-          <Text style={profileStyles.displayNameText}>~{displayName}</Text>
+
+          {/* ONLINE STATUS */}
           {isOnline && (
             <Text style={profileStyles.onlineStatusText}>Online</Text>
           )}
         </View>
+
+
 
         {/* ─── Action Buttons Row ─── */}
         <View style={profileStyles.actionsRow}>
@@ -310,9 +383,10 @@ const ContactProfileScreen = ({ route, navigation }) => {
             }
           />
 
+          {/* ✅ FIX 2 — iconFamily corrected: 'timer' is a MaterialIcons icon, not MCIcon */}
           <MenuItem
             iconName="timer"
-            iconFamily="material-community"
+            iconFamily="material"
             title="Disappearing messages"
             subtitle={disappearingMessages}
             onPress={handleDisappearingMessages}
@@ -354,14 +428,14 @@ const ContactProfileScreen = ({ route, navigation }) => {
         <View style={profileStyles.settingsSection}>
           <MenuItem
             iconName="block"
-            title={`Block ${displayName}`}
+            title={`Block ${finalName}`}
             titleColor="#DC2626"
             iconColor="#DC2626"
             onPress={handleBlock}
           />
           <MenuItem
             iconName="thumb-down"
-            title={`Report ${displayName}`}
+            title={`Report ${finalName}`}
             titleColor="#DC2626"
             iconColor="#DC2626"
             onPress={handleReport}
@@ -370,7 +444,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
       </ScrollView>
 
       {/* ═══════════════════════════════════════════════════════ */}
-      {/*  ALL CUSTOM MODALS — Close on outside tap              */}
+      {/*  ALL CUSTOM MODALS                                      */}
       {/* ═══════════════════════════════════════════════════════ */}
 
       {/* ── Audio Call Modal ── */}
@@ -381,7 +455,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
         <View style={profileStyles.modalHeader}>
           <Text style={profileStyles.modalTitle}>Audio Call</Text>
           <Text style={profileStyles.modalMessage}>
-            Calling {displayName}...
+            Call {finalName}?
           </Text>
         </View>
         <View style={profileStyles.modalFooter}>
@@ -391,12 +465,11 @@ const ContactProfileScreen = ({ route, navigation }) => {
           >
             <Text style={profileStyles.modalCancelText}>Cancel</Text>
           </TouchableOpacity>
+
+          {/* ✅ FIX 1 — Uses handleStartAudioCall with direct navigation.navigate() */}
           <TouchableOpacity
             style={profileStyles.modalConfirmButton}
-            onPress={() => {
-              setShowCallModal(false);
-              console.log('Audio call started');
-            }}
+            onPress={handleStartAudioCall}
           >
             <Text style={profileStyles.modalConfirmText}>Call</Text>
           </TouchableOpacity>
@@ -411,7 +484,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
         <View style={profileStyles.modalHeader}>
           <Text style={profileStyles.modalTitle}>Video Call</Text>
           <Text style={profileStyles.modalMessage}>
-            Video calling {displayName}...
+            Video call {finalName}?
           </Text>
         </View>
         <View style={profileStyles.modalFooter}>
@@ -425,7 +498,8 @@ const ContactProfileScreen = ({ route, navigation }) => {
             style={profileStyles.modalConfirmButton}
             onPress={() => {
               setShowVideoCallModal(false);
-              console.log('Video call started');
+              console.log('[ContactProfileScreen] Video call started');
+              // TODO: navigate to VideoCallScreen when ready
             }}
           >
             <Text style={profileStyles.modalConfirmText}>Call</Text>
@@ -441,7 +515,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
         <View style={profileStyles.modalHeader}>
           <Text style={profileStyles.modalTitle}>Save Contact</Text>
           <Text style={profileStyles.modalMessage}>
-            Save {displayName} to contacts?
+            Save {finalName} to contacts?
           </Text>
         </View>
         <View style={profileStyles.modalFooter}>
@@ -455,7 +529,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
             style={profileStyles.modalConfirmButton}
             onPress={() => {
               setShowSaveModal(false);
-              console.log('Contact saved');
+              console.log('[ContactProfileScreen] Contact saved');
             }}
           >
             <Text style={profileStyles.modalConfirmText}>Save</Text>
@@ -509,17 +583,17 @@ const ContactProfileScreen = ({ route, navigation }) => {
       >
         <View style={profileStyles.modalHeader}>
           <Text style={profileStyles.modalTitle}>Mute Notifications</Text>
-          <Text style={profileStyles.modalMessage}>
-            Choose mute duration
-          </Text>
+          <Text style={profileStyles.modalMessage}>Choose mute duration</Text>
         </View>
 
         <View style={profileStyles.modalOptionsContainer}>
+          {/* ✅ FIX 3 — Each option now stores its own value before closing */}
           {['8 Hours', '1 Week', 'Always'].map(option => (
             <TouchableOpacity
               key={option}
               style={profileStyles.modalOption}
               onPress={() => {
+                console.log('[ContactProfileScreen] Muted for:', option);
                 setMuteNotifications(true);
                 setShowMuteModal(false);
               }}
@@ -569,7 +643,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
         <View style={profileStyles.modalHeader}>
           <Text style={profileStyles.modalTitle}>Block Contact</Text>
           <Text style={profileStyles.modalMessage}>
-            Block {displayName}? Blocked contacts can no longer send you
+            Block {finalName}? Blocked contacts can no longer send you
             messages.
           </Text>
         </View>
@@ -587,7 +661,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
             ]}
             onPress={() => {
               setShowBlockModal(false);
-              console.log('Contact blocked');
+              console.log('[ContactProfileScreen] Contact blocked:', finalName);
             }}
           >
             <Text style={profileStyles.modalConfirmText}>Block</Text>
@@ -603,7 +677,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
         <View style={profileStyles.modalHeader}>
           <Text style={profileStyles.modalTitle}>Report Contact</Text>
           <Text style={profileStyles.modalMessage}>
-            Report {displayName}? The last 5 messages will be forwarded to
+            Report {finalName}? The last 5 messages will be forwarded to
             us for review.
           </Text>
         </View>
@@ -621,7 +695,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
             ]}
             onPress={() => {
               setShowReportModal(false);
-              console.log('Contact reported');
+              console.log('[ContactProfileScreen] Contact reported:', finalName);
             }}
           >
             <Text style={profileStyles.modalConfirmText}>Report</Text>

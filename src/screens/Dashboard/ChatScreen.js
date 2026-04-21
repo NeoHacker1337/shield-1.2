@@ -33,7 +33,9 @@ import Sound, {
   AudioSourceAndroidType,
   AVEncoderAudioQualityIOSType,
 } from 'react-native-nitro-sound';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { useActiveRoom } from '../../context/ActiveRoomContext';
 import authService from '../../services/AuthService';
 import { handleApiError } from '../../utils/errorHandler';
 import styles from '../../assets/ChatScreenStyles';
@@ -151,17 +153,17 @@ const SwipeableMessageRow = memo(
 
     return (
       <>
-        {showDate && (
-          <View style={styles.dateSeparator}>
-            <Text style={styles.dateSeparatorText}>
-              {formatMessageDateLabel(item.created_at)}
-            </Text>
-          </View>
-        )}
+
 
         <View style={{ position: 'relative' }}>
 
-
+          {showDate && (
+            <View style={styles.dateSeparator}>
+              <Text style={styles.dateSeparatorText}>
+                {formatMessageDateLabel(item.created_at)}
+              </Text>
+            </View>
+          )}
           {/* LEFT SIDE ICON (already موجود) */}
           <Animated.View
             style={{
@@ -239,6 +241,8 @@ const ChatScreen = ({ route, navigation }) => {
   const isRecordingRef = useRef(false);
   const mountedRef = useRef(true);
 
+
+  const { setActiveRoom, clearActiveRoom } = useActiveRoom();
   // ✅ FIX 1: Destructure keyboardHeight too
   const { isKeyboardVisible, keyboardHeight } = useKeyboard();
 
@@ -262,6 +266,9 @@ const ChatScreen = ({ route, navigation }) => {
       .catch(err => handleApiError(err, 'Failed to get current user'));
   }, [currentUser]);
 
+  // Audio Call Feature 
+
+
   const { localContactName } = useContactName({ chatRoom, currentUser });
 
   const {
@@ -278,7 +285,7 @@ const ChatScreen = ({ route, navigation }) => {
     checkForNewMessages,
     loadOlderMessages,
     handleScroll,
-  } = useMessages({ chatRoom, currentUser });
+  } = useMessages({ chatRoom, currentUser, navigation });
 
   const {
     newMessage,
@@ -445,6 +452,18 @@ const ChatScreen = ({ route, navigation }) => {
     }
   }, [isKeyboardVisible, scrollToBottom]);
 
+
+  useEffect(() => {
+    if (!chatRoom?.id) return;
+
+    setActiveRoom(chatRoom.id);
+    saveRoomToWatchList(chatRoom.id);
+
+    return () => {
+      clearActiveRoom();
+    };
+  }, [chatRoom?.id]);
+
   const requestPermission = async () => {
     if (Platform.OS === 'android') {
       const granted = await PermissionsAndroid.request(
@@ -557,6 +576,36 @@ const ChatScreen = ({ route, navigation }) => {
     } finally {
       stopRecordTimer();
       setIsRecording(false);
+    }
+  };
+
+
+  // for calling feature 
+
+  // ✅ FIXED — Saves room ID safely and consistently
+  const saveRoomToWatchList = async (roomId) => {
+    try {
+      const existing = await AsyncStorage.getItem('watched_room_ids');
+
+      let rooms = [];
+      if (existing) {
+        try {
+          rooms = JSON.parse(existing);
+        } catch (e) {
+          console.log('[GLOBAL] Corrupted watch list — resetting');
+          rooms = [];
+        }
+      }
+
+      const roomIdStr = String(roomId); // ✅ FIX — normalize
+
+      if (!rooms.includes(roomIdStr)) {
+        rooms.push(roomIdStr);
+        await AsyncStorage.setItem('watched_room_ids', JSON.stringify(rooms));
+        console.log('[GLOBAL] Room added to watch list:', roomIdStr);
+      }
+    } catch (e) {
+      console.log('[GLOBAL] Error saving room:', e?.message);
     }
   };
 
@@ -918,7 +967,6 @@ const ChatScreen = ({ route, navigation }) => {
       >
         <View style={{ flex: 1, backgroundColor: '#ECE5DD' }}>
           {/* ─── Header (unchanged) ─── */}
-
           <View style={styles.header}>
             <TouchableOpacity
               onPress={() => navigation.goBack()}
@@ -927,26 +975,15 @@ const ChatScreen = ({ route, navigation }) => {
               <Icon name="arrow-back" size={24} color="#FFFFFF" />
             </TouchableOpacity>
 
-            {/* ✅ Changed View → TouchableOpacity to navigate to ContactProfile */}
             <TouchableOpacity
               style={styles.headerContent}
               activeOpacity={0.7}
               onPress={() => {
                 navigation.navigate('ContactProfile', {
-                  displayName,
-                  phoneNumber:
-                    chatRoom?.phone_number ||
-                    chatRoom?.participants?.find(
-                      p => p.id !== currentUser?.id
-                    )?.phone_number ||
-                    '',
-                  avatarColor,
-                  avatarChar,
-                  avatarUrl:
-                    chatRoom?.participants?.find(
-                      p => p.id !== currentUser?.id
-                    )?.avatar_url || null,
-                  isOnline,
+                  name: displayName,
+                  avatar: avatarChar,
+                  isOnline: isOnline,
+
                   chatRoom,
                   currentUser,
                 });
@@ -982,6 +1019,7 @@ const ChatScreen = ({ route, navigation }) => {
               </TouchableOpacity>
             </View>
           </View>
+
 
           {/* ─── Messages Area (unchanged) ─── */}
           <View style={{ flex: 1, backgroundColor: '#ECE5DD' }}>

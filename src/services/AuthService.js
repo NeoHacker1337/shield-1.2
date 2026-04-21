@@ -302,6 +302,8 @@ class AuthService {
         ['auth_token', token],
         ['user_data', JSON.stringify(user)],
       ]);
+      // ✅ ADD THIS — save user ID for global call listener
+      await AsyncStorage.setItem('current_user_id', String(user.id));
 
       await Keychain.setGenericPassword(email, token, {
         service: AUTH_SERVICE,
@@ -357,6 +359,9 @@ class AuthService {
       ['user_data', JSON.stringify(user)],
     ]);
 
+    // ✅ ADD THIS — save user ID for global call listener
+    await AsyncStorage.setItem('current_user_id', String(user.id));
+
     await Keychain.setGenericPassword(email, token, {
       service: AUTH_SERVICE,
     });
@@ -374,6 +379,7 @@ class AuthService {
     } catch { }
 
     await AsyncStorage.multiRemove(['auth_token', 'user_data']);
+    await AsyncStorage.removeItem('current_user_id');
     await this.clearCredentials();
   }
 
@@ -419,6 +425,81 @@ class AuthService {
       'is_storage_data_enabled',
       JSON.stringify(value)
     );
+  }
+
+  /**
+   * getContactDisplayName
+   *
+   * 1. Looks up the phone number in the device phonebook (Contacts).
+   * 2. If found  → returns { name, fromPhonebook: true }
+   * 3. If NOT found → returns { name: serverName, fromPhonebook: false,
+   *                             label: 'Not in phonebook' }
+   *
+   * @param {string} phoneNumber   - The phone number to look up (any format)
+   * @param {string} serverName    - Fallback name stored on the server
+   * @returns {Promise<{ name: string, fromPhonebook: boolean, label?: string }>}
+   */
+  async getContactDisplayName(phoneNumber, serverName) {
+    try {
+      // Dynamically import so the rest of AuthService works even if
+      // react-native-contacts is not installed yet.
+      const Contacts = require('react-native-contacts').default;
+
+      // Normalize helpers — strip all non-digit chars for comparison
+      const digits = (num) => (num || '').replace(/\D/g, '');
+      const targetDigits = digits(phoneNumber);
+
+      if (!targetDigits) {
+        // No number to search — fall back to server name immediately
+        return {
+          name: serverName || 'Unknown',
+          fromPhonebook: false,
+          label: 'Not in phonebook',
+        };
+      }
+
+      // Fetch all contacts (cached by the OS after first call)
+      const allContacts = await Contacts.getAll();
+
+      // Find the first contact whose any phone number matches
+      const match = allContacts.find((contact) =>
+        (contact.phoneNumbers || []).some((p) => {
+          const contactDigits = digits(p.number);
+          // Match by last 10 digits to handle country-code differences
+          const len = Math.min(contactDigits.length, targetDigits.length, 10);
+          return (
+            contactDigits.slice(-len) === targetDigits.slice(-len) &&
+            len >= 7  // safety — avoid false matches on very short strings
+          );
+        })
+      );
+
+      if (match) {
+        const name =
+          [match.givenName, match.familyName].filter(Boolean).join(' ').trim() ||
+          match.displayName ||
+          serverName ||
+          'Unknown';
+
+        return { name, fromPhonebook: true };
+      }
+
+      // Not found in phonebook — return server name with label
+      return {
+        name: serverName || phoneNumber || 'Unknown',
+        fromPhonebook: false,
+        label: 'Not in phonebook',
+      };
+    } catch (error) {
+      console.warn('⚠️ [getContactDisplayName] Error reading contacts:', error.message);
+
+      // Graceful fallback — never crash the caller
+      return {
+        name: serverName || phoneNumber || 'Unknown',
+        fromPhonebook: false,
+        label: 'Not in phonebook',
+      };
+    }
   }
 
   async changePassword({ email, password, otp }) {

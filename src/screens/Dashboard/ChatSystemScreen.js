@@ -62,7 +62,8 @@ const ChatSystemScreen = ({ navigation }) => {
             selectionMode={h.selectionMode}
             selectedRooms={h.selectedRooms}
             roomMeta={h.roomMeta}
-            displayName={h.getDisplayNameFromChatRoom(item, h.currentUser)} // ← ADD THIS
+            displayName={h.getDisplayNameFromChatRoom(item, h.currentUser)}
+            displayNameMeta={h.contactDisplayNames?.[item.id]}
             localRoomNames={h.localRoomNames}
             formatMessageTime={h.formatMessageTime}
             onPress={() => h.selectionMode ? h.toggleRoomSelection(item.id) : h.openChat(item)}
@@ -168,7 +169,7 @@ const ChatSystemScreen = ({ navigation }) => {
         syncingContacts={h.syncingContacts}
         onSyncContacts={h.handleSyncContacts}
         onInvite={h.handleInviteForChat}
-       onViewAllInvitations={() => navigation.navigate('AllInvitations')}
+        onViewAllInvitations={() => navigation.navigate('AllInvitations')}
       />
 
       <LockPinModal

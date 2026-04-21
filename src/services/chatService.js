@@ -118,6 +118,37 @@ const chatService = {
   },
 
 
+  // Audio Call Feature Start
+  sendCallOffer: (data) => {
+    return api.post('/v1/call/offer', data);
+  },
+
+  sendCallAnswer: (data) => {
+    return api.post('/v1/call/answer', data);
+  },
+
+  sendIceCandidate: (data) => {
+    return api.post('/v1/call/ice', data);
+  },
+
+  getCallOffer: (roomId) => {
+    return api.get(`/v1/call/offer/${roomId}`);
+  },
+
+  getCallAnswer: (roomId) => {
+    return api.get(`/v1/call/answer/${roomId}`);
+  },
+
+  getIceCandidates: (roomId) => {
+    return api.get(`/v1/call/ice/${roomId}`);
+  },
+
+  endCall: (roomId) => {
+    return api.delete(`/v1/call/end/${roomId}`);
+  },
+
+  getCallStatus: (roomId) => api.get(`/v1/call/status/${roomId}`),
+  // Audio Call Feature End
 
 };
 

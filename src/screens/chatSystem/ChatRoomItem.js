@@ -50,7 +50,7 @@ const AvatarView = memo(({ isSelected, isOnline, avatarChar }) => (
  * Renders status indicator icons (pinned, muted, archived, etc.)
  * followed by the chat display name.
  */
-const MetaIconsRow = memo(({ meta, displayName }) => (
+const MetaIconsRow = memo(({ meta, displayName, notInPhonebook }) => (
   <View style={localStyles.metaRow}>
     {!!meta.pinned && (
       <Icon
@@ -106,9 +106,19 @@ const MetaIconsRow = memo(({ meta, displayName }) => (
         accessibilityElementsHidden
       />
     )}
-    <Text style={baseStyles.chatName} numberOfLines={1}>
-      {displayName}
-    </Text>
+
+    {/* Name + "Not in phonebook" label */}
+    <View style={localStyles.nameColumn}>
+      <Text style={baseStyles.chatName} numberOfLines={1}>
+        {displayName}
+      </Text>
+      {notInPhonebook && (
+        <Text style={localStyles.notInPhonebookLabel}>
+          Not in phonebook
+        </Text>
+      )}
+    </View>
+
   </View>
 ));
 
@@ -129,6 +139,8 @@ const MetaIconsRow = memo(({ meta, displayName }) => (
  * @param {Set} [props.selectedRooms]        - Set of selected room IDs
  * @param {object} [props.roomMeta]          - Map of room ID → meta flags
  * @param {object} [props.localRoomNames]    - Map of room ID → local contact name
+ * @param {string} [props.displayName]       - Resolved display name from parent
+ * @param {object} [props.displayNameMeta]   - { name, fromPhonebook, label? } from authService
  * @param {boolean} [props.isOnline]         - Online status of the other participant
  * @param {function} [props.onPress]         - Called on tap
  * @param {function} [props.onLongPress]     - Called on long press
@@ -141,25 +153,38 @@ const ChatRoomItem = ({
   selectedRooms,
   roomMeta,
   localRoomNames,
-  isOnline = false,  // ✅ Received as prop — no more Math.random()
+  displayName: displayNameProp,    // ← from ChatSystemScreen (getDisplayNameFromChatRoom)
+  displayNameMeta,                 // ← from authService.getContactDisplayName
+  isOnline = false,
   onPress,
   onLongPress,
   formatMessageTime,
 }) => {
-  // ── Derived values ────────────────────────────────────────────────
-
-  // ✅ Safe access with fallback empty objects
+  // ── Safe access with fallback empty objects ───────────────────
   const safeLocalRoomNames = localRoomNames ?? {};
   const safeRoomMeta = roomMeta ?? {};
 
+  // ── Display name resolution ───────────────────────────────────
+  // Priority:
+  // 1. Phonebook name (displayNameMeta.name, fromPhonebook: true)
+  // 2. Server name   (displayNameMeta.name, fromPhonebook: false)
+  // 3. displayNameProp passed from parent
+  // 4. localRoomNames fallback
+  // 5. item.name
+  // 6. 'Unnamed Chat'
   const displayName =
+    displayNameMeta?.name ||
+    displayNameProp ||
     safeLocalRoomNames[item?.id] ||
     item?.name ||
     'Unnamed Chat';
 
+  // True when number is NOT saved in device phonebook
+  const notInPhonebook = displayNameMeta?.fromPhonebook === false;
+
+  // ── Other derived values ──────────────────────────────────────
   const meta = safeRoomMeta[item?.id] ?? {};
 
-  // ✅ Safe Set access — guard against non-Set values
   const isSelected =
     selectedRooms instanceof Set
       ? selectedRooms.has(item?.id)
@@ -167,28 +192,23 @@ const ChatRoomItem = ({
 
   const unreadCount = item?.unread_count ?? 0;
 
-  // ✅ Avatar character — safe for any displayName
   const avatarChar = displayName.charAt(0).toUpperCase() || '?';
 
-  // ✅ Message preview using ChatHelpers — handles image/audio/file types
   const lastMessagePreview = useMemo(() => {
     if (meta.locked) return '🔒 Messages locked';
     return getMessagePreview(item?.last_message) || 'No messages yet';
   }, [meta.locked, item?.last_message]);
 
-  // ✅ Formatted time — safe call
   const formattedTime = useMemo(() => {
     if (typeof formatMessageTime !== 'function') return '';
     return formatMessageTime(item?.last_message?.created_at) ?? '';
   }, [formatMessageTime, item?.last_message?.created_at]);
 
-  // ✅ Unread badge label
   const unreadLabel =
     unreadCount > MAX_UNREAD_DISPLAY
       ? UNREAD_OVERFLOW_LABEL
       : String(unreadCount);
 
-  // ✅ Memoized container style to avoid new array on every render
   const containerStyle = useMemo(() => [
     baseStyles.chatItem,
     index === 0 && baseStyles.firstChatItem,
@@ -196,7 +216,6 @@ const ChatRoomItem = ({
     meta.blocked && localStyles.blockedItem,
   ], [index, isSelected, meta.blocked]);
 
-  // ── Accessibility label ──────────────────────────────────────────
   const accessibilityLabel = useMemo(() => {
     const parts = [`Chat with ${displayName}`];
     if (unreadCount > 0) parts.push(`${unreadCount} unread messages`);
@@ -230,7 +249,11 @@ const ChatRoomItem = ({
 
         {/* Name row: meta icons + display name + timestamp */}
         <View style={baseStyles.chatHeader}>
-          <MetaIconsRow meta={meta} displayName={displayName} />
+          <MetaIconsRow
+            meta={meta}
+            displayName={displayName}
+            notInPhonebook={notInPhonebook}
+          />
           <Text style={baseStyles.messageTime}>{formattedTime}</Text>
         </View>
 
@@ -272,6 +295,17 @@ const localStyles = StyleSheet.create({
   },
   blockedItem: {
     opacity: 0.5,
+  },
+  // Wraps the name + "Not in phonebook" label vertically
+  nameColumn: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  notInPhonebookLabel: {
+    fontSize: 10,
+    color: '#999',
+    fontStyle: 'italic',
+    marginTop: 1,
   },
 });
 

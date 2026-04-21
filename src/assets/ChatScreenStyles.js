@@ -1071,7 +1071,7 @@ const styles = StyleSheet.create({
   // ✅ Fixed: removed duplicate `newMessageText` (was identical to this).
   //    Consolidate all badge label usage to `newMessageBadgeText`.
   newMessageBadgeText: {
-    color: COLORS.textWhite,
+    color: COLORS.textPrimary,
     fontSize: 13,
     fontWeight: '600',
   },
@@ -1098,6 +1098,13 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
+  currentUserMessageText: {
+    color: '#000000',
+  },
+
+  otherUserMessageText: {
+    color: '#000000',
+  },
 });
 
 export default styles;

@@ -9,7 +9,7 @@ import { handleApiError } from '../../../utils/errorHandler';
 // ─────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────
-const MAX_MESSAGE_LENGTH = 5000;
+const MAX_MESSAGE_LENGTH = 3000;
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS — module level, never recreated
