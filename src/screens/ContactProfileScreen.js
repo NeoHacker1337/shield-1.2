@@ -17,6 +17,7 @@ import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import profileStyles from '../assets/ContactProfileScreenStyles';
 import useContactName from '../screens/chatSystem/Features/useContactName';
 import authService from '../services/AuthService';
+import { getDisplayNameFromChatRoom } from '../utils/chatUtils';
 // ═══════════════════════════════════════════════════════════════
 //  REUSABLE CUSTOM MODAL — Closes on outside tap
 // ═══════════════════════════════════════════════════════════════
@@ -125,7 +126,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
   const insets = useSafeAreaInsets();
 
   const {
-    displayName = 'Unknown',
+
     phoneNumber = '',
     avatarColor = '#128C7E',
     avatarChar = '?',
@@ -161,11 +162,13 @@ const ContactProfileScreen = ({ route, navigation }) => {
   // 3. localContactName from hook
   // 4. serverContactName from route params
   // 5. displayName fallback
+  const displayName = getDisplayNameFromChatRoom(chatRoom, currentUser);
+
   const finalName =
-    resolvedNameMeta?.name ||
-    localContactName ||
-    serverContactName ||
-    displayName;
+    resolvedNameMeta?.name ||        // phonebook or server resolved
+    localContactName ||              // local hook
+    serverContactName ||             // passed from navigation
+    displayName;                     // last fallback
 
   // Show "Not in phonebook" only when resolved and confirmed not in phonebook
   const showNotSaved = resolvedNameMeta !== null && resolvedNameMeta.fromPhonebook === false;

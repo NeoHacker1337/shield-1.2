@@ -40,6 +40,7 @@ import authService from '../../services/AuthService';
 import { handleApiError } from '../../utils/errorHandler';
 import styles from '../../assets/ChatScreenStyles';
 import AttachmentMenu from '../chatSystem/AttachmentMenu';
+import { getDisplayNameFromChatRoom } from '../../utils/chatUtils';
 import useAttachment from '../chatSystem/useAttachment';
 import MessageItem from '../chatSystem/MessageItem';
 import useContactName from '../chatSystem/Features/useContactName';
@@ -53,7 +54,6 @@ import useReplyMessage from '../chatSystem/Features/useReplyMessage';
 import ReplyBanner from '../chatSystem/ReplyBanner';
 
 import {
-  getDisplayNameFromChatRoom,
   getContactAvatar,
   getAvatarColor,
   getOnlineStatus,
@@ -225,7 +225,7 @@ const SwipeableMessageRow = memo(
 
 const ChatScreen = ({ route, navigation }) => {
   const insets = useSafeAreaInsets();
-
+  
   const {
     chatRoom: initialChatRoom,
     currentUser: initialCurrentUser,
@@ -234,6 +234,7 @@ const ChatScreen = ({ route, navigation }) => {
 
   const [chatRoom, setChatRoom] = useState(initialChatRoom);
   const [currentUser, setCurrentUser] = useState(initialCurrentUser);
+  const displayName = getDisplayNameFromChatRoom(chatRoom, currentUser);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
 
   const flatListRef = useRef(null);
@@ -267,9 +268,6 @@ const ChatScreen = ({ route, navigation }) => {
   }, [currentUser]);
 
   // Audio Call Feature 
-
-
-  const { localContactName } = useContactName({ chatRoom, currentUser });
 
   const {
     messages,
@@ -689,12 +687,6 @@ const ChatScreen = ({ route, navigation }) => {
     );
   }
 
-  const baseDisplayName = getDisplayNameFromChatRoom(
-    chatRoom,
-    contactName,
-    currentUser
-  );
-  const displayName = localContactName || baseDisplayName;
   const avatarChar = getContactAvatar(displayName);
   const avatarColor = getAvatarColor(displayName);
   const isOnline = getOnlineStatus();

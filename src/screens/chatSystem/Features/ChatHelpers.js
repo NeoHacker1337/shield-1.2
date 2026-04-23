@@ -77,54 +77,6 @@ const stripQueryParams = (url) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────
-// DISPLAY NAME
-// ─────────────────────────────────────────────────────────────────
-
-/**
- * Resolves the best display name for a chat room.
- * Priority: routeContactName → room.name → participant name/email → guest → fallback
- *
- * @param {object} room - Chat room object
- * @param {string} routeContactName - Name passed via navigation params
- * @param {object} currentUser - Current logged-in user
- * @returns {string}
- */
-export const getDisplayNameFromChatRoom = (room, routeContactName, currentUser) => {
-  // 1. Highest priority: name from navigation route params
-  const trimmedRoute = routeContactName?.trim();
-  if (trimmedRoute) return trimmedRoute;
-
-  // 2. Room-level name (group chats or named rooms)
-  const trimmedRoomName = room?.name?.trim();
-  if (trimmedRoomName) return trimmedRoomName;
-
-  // 3. Find the other participant from participants array
-  if (
-    Array.isArray(room?.participants) &&
-    room.participants.length > 0 &&
-    currentUser?.id
-  ) {
-    const other = room.participants.find(
-      (p) => p && p.id !== currentUser.id
-    );
-
-    const trimmedName = other?.name?.trim();
-    if (trimmedName) return trimmedName;
-
-    // 3b. Fallback to email if name is missing
-    const trimmedEmail = other?.email?.trim();
-    if (trimmedEmail) return trimmedEmail;
-  }
-
-  // 4. Guest room fallback
-  if (room?.type === 'guest' || room?.is_guest_room) {
-    return 'Guest Chat';
-  }
-
-  // 5. Final fallback
-  return 'Unknown Contact';
-};
 
 // ─────────────────────────────────────────────────────────────────
 // AVATAR HELPERS

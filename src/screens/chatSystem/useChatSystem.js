@@ -87,23 +87,23 @@ export default function useChatSystem(navigation) {
 
 
   // Add this function
-const resolveContactNames = useCallback(async (rooms) => {
-  const results = {};
-  for (const room of rooms) {
-    const phoneNumber = room?.contact?.phone || room?.phone || '';
-    const serverName = getDisplayNameFromChatRoom(room, currentUser);
-    const resolved = await authService.getContactDisplayName(phoneNumber, serverName);
-    results[room.id] = resolved;
-  }
-  setContactDisplayNames(results);
-}, [currentUser]);
+  const resolveContactNames = useCallback(async (rooms) => {
+    const results = {};
+    for (const room of rooms) {
+      const phoneNumber = room?.contact?.phone || room?.phone || '';
+      const serverName = getDisplayNameFromChatRoom(room, currentUser);
+      const resolved = await authService.getContactDisplayName(phoneNumber, serverName);
+      results[room.id] = resolved;
+    }
+    setContactDisplayNames(results);
+  }, [currentUser]);
 
-// Call it when rooms load
-useEffect(() => {
-  if (sortedRooms?.length > 0) {
-    resolveContactNames(sortedRooms);
-  }
-}, [sortedRooms]);
+  // Call it when rooms load
+  useEffect(() => {
+    if (sortedRooms?.length > 0) {
+      resolveContactNames(sortedRooms);
+    }
+  }, [sortedRooms]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // EFFECT 1 — Restore roomMeta from AsyncStorage on mount (RUNS FIRST)
@@ -723,38 +723,38 @@ useEffect(() => {
     setSearchQuery('');
   }, [loadContacts]);
 
-const handleSelectContact = useCallback(async (contact) => {
-  if (!contact?.id) { Alert.alert('Error', 'Invalid contact.'); return; }
-  try {
-    setShowContactsModal(false);
-    setLoading(true);
-    const chatName = contact.is_current_user
-      ? `${contact.name} (Personal Notes)` : contact.name;
-    const newRoom = await chatService.createChatRoom(contact.id, chatName);
-    await loadChatRooms();
-    const created = newRoom.data || newRoom;
-    if (created) navigation.getParent()?.navigate('ChatScreen', {   // ✅ getParent()
-      chatRoom: created, currentUser, contactName: chatName,
-    });
-  } catch (error) {
-    if (error.response?.status === 409) {
-      Alert.alert('Chat Exists', 'A chat with this user already exists.');
+  const handleSelectContact = useCallback(async (contact) => {
+    if (!contact?.id) { Alert.alert('Error', 'Invalid contact.'); return; }
+    try {
+      setShowContactsModal(false);
+      setLoading(true);
+      const chatName = contact.is_current_user
+        ? `${contact.name} (Personal Notes)` : contact.name;
+      const newRoom = await chatService.createChatRoom(contact.id, chatName);
       await loadChatRooms();
-      const existing = chatRoomsRef.current.find(r =>
-        r.name === contact.name ||
-        r.name === `${contact.name} (Personal Notes)` ||
-        r.participants?.some(p => p.id === contact.id)
-      );
-      if (existing) navigation.getParent()?.navigate('ChatScreen', {   // ✅ getParent()
-        chatRoom: existing, currentUser, contactName: existing.name,
+      const created = newRoom.data || newRoom;
+      if (created) navigation.navigate('Chat', {
+        chatRoom: created, currentUser, contactName: chatName,
       });
-    } else {
-      Alert.alert('Error', `Failed to start chat with ${contact.name}.`);
+    } catch (error) {
+      if (error.response?.status === 409) {
+        Alert.alert('Chat Exists', 'A chat with this user already exists.');
+        await loadChatRooms();
+        const existing = chatRoomsRef.current.find(r =>
+          r.name === contact.name ||
+          r.name === `${contact.name} (Personal Notes)` ||
+          r.participants?.some(p => p.id === contact.id)
+        );
+        if (existing) navigation.navigate('Chat', {
+          chatRoom: existing, currentUser, contactName: existing.name,
+        });
+      } else {
+        Alert.alert('Error', `Failed to start chat with ${contact.name}.`);
+      }
+    } finally {
+      setLoading(false);
     }
-  } finally {
-    setLoading(false);
-  }
-}, [currentUser, loadChatRooms, navigation]);
+  }, [currentUser, loadChatRooms, navigation]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // CHAT ROOM DISPLAY NAME
@@ -768,9 +768,7 @@ const handleSelectContact = useCallback(async (contact) => {
       if (otherName) return otherName;
     }
 
-    if (room?.type !== 'one-to-one' && room?.name?.trim()) return room.name;
-
-    if (room?.type === 'guest' || room?.isguestroom) return 'Guest Chat';
+    if (room?.name?.trim()) return room.name;
 
     return 'Unknown Contact';
   }, [localRoomNames]);
@@ -780,16 +778,16 @@ const handleSelectContact = useCallback(async (contact) => {
   // ══════════════════════════════════════════════════════════════════════════
 
   const openChat = useCallback((room) => {
-  if (roomMeta[room.id]?.blocked) {
-    Alert.alert('Blocked', 'Unblock this contact to send messages.');
-    return;
-  }
-  navigation.getParent()?.navigate('ChatScreen', {
-    chatRoom: room,
-    currentUser,
-    contactName: getDisplayNameFromChatRoom(room, currentUser),
-  });
-}, [roomMeta, currentUser, navigation, getDisplayNameFromChatRoom]);
+    if (roomMeta[room.id]?.blocked) {
+      Alert.alert('Blocked', 'Unblock this contact to send messages.');
+      return;
+    }
+    navigation.getParent()?.navigate('Chat', {
+      chatRoom: room,
+      currentUser,
+      contactName: getDisplayNameFromChatRoom(room, currentUser),
+    });
+  }, [roomMeta, currentUser, navigation, getDisplayNameFromChatRoom]);
 
   // ✅ Fixed date logic: compare calendar dates, not arbitrary 24h buckets
   const formatMessageTime = useCallback((ts) => {
@@ -871,7 +869,7 @@ const handleSelectContact = useCallback(async (contact) => {
     // ✅ searchQuery returned once (was duplicated)
     openSearch, closeSearch, handleChatSearch,
     filteredRooms, showLockedChats,
-    setShowLockedChats, getDisplayNameFromChatRoom ,
+    setShowLockedChats, getDisplayNameFromChatRoom,
     contactDisplayNames
   };
 }
