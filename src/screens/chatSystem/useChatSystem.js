@@ -10,6 +10,7 @@ import Contacts from 'react-native-contacts';
 import chatService from '../../services/chatService';
 import authService from '../../services/AuthService';
 import contactSyncService from '../../services/contactSyncService';
+
 // ✅ Removed unused `verifyValue` import
 import {
   loadLocalMeta,
@@ -722,31 +723,38 @@ useEffect(() => {
     setSearchQuery('');
   }, [loadContacts]);
 
-  const handleSelectContact = useCallback(async (contact) => {
-    if (!contact?.id) { Alert.alert('Error', 'Invalid contact.'); return; }
-    try {
-      setShowContactsModal(false);
-      setLoading(true);
-      const chatName = contact.is_current_user
-        ? `${contact.name} (Personal Notes)` : contact.name;
-      const newRoom = await chatService.createChatRoom(contact.id, chatName);
+const handleSelectContact = useCallback(async (contact) => {
+  if (!contact?.id) { Alert.alert('Error', 'Invalid contact.'); return; }
+  try {
+    setShowContactsModal(false);
+    setLoading(true);
+    const chatName = contact.is_current_user
+      ? `${contact.name} (Personal Notes)` : contact.name;
+    const newRoom = await chatService.createChatRoom(contact.id, chatName);
+    await loadChatRooms();
+    const created = newRoom.data || newRoom;
+    if (created) navigation.getParent()?.navigate('ChatScreen', {   // ✅ getParent()
+      chatRoom: created, currentUser, contactName: chatName,
+    });
+  } catch (error) {
+    if (error.response?.status === 409) {
+      Alert.alert('Chat Exists', 'A chat with this user already exists.');
       await loadChatRooms();
-      const created = newRoom.data || newRoom;
-      if (created) navigation.navigate('ChatScreen', { chatRoom: created, currentUser, contactName: chatName });
-    } catch (error) {
-      if (error.response?.status === 409) {
-        Alert.alert('Chat Exists', 'A chat with this user already exists.');
-        await loadChatRooms();
-        // ✅ Read from ref — chatRoomsRef.current has the freshly loaded rooms
-        const existing = chatRoomsRef.current.find(r =>
-          r.name === contact.name ||
-          r.name === `${contact.name} (Personal Notes)` ||
-          r.participants?.some(p => p.id === contact.id)
-        );
-        if (existing) navigation.navigate('ChatScreen', { chatRoom: existing, currentUser, contactName: existing.name });
-      } else { Alert.alert('Error', `Failed to start chat with ${contact.name}.`); }
-    } finally { setLoading(false); }
-  }, [currentUser, loadChatRooms, navigation]);
+      const existing = chatRoomsRef.current.find(r =>
+        r.name === contact.name ||
+        r.name === `${contact.name} (Personal Notes)` ||
+        r.participants?.some(p => p.id === contact.id)
+      );
+      if (existing) navigation.getParent()?.navigate('ChatScreen', {   // ✅ getParent()
+        chatRoom: existing, currentUser, contactName: existing.name,
+      });
+    } else {
+      Alert.alert('Error', `Failed to start chat with ${contact.name}.`);
+    }
+  } finally {
+    setLoading(false);
+  }
+}, [currentUser, loadChatRooms, navigation]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // CHAT ROOM DISPLAY NAME
@@ -772,16 +780,16 @@ useEffect(() => {
   // ══════════════════════════════════════════════════════════════════════════
 
   const openChat = useCallback((room) => {
-    if (roomMeta[room.id]?.blocked) {
-      Alert.alert('Blocked', 'Unblock this contact to send messages.');
-      return;
-    }
-    navigation.navigate('ChatScreen', {
-      chatRoom: room,
-      currentUser,
-      contactName: getDisplayNameFromChatRoom(room, currentUser),
-    });
-  }, [roomMeta, currentUser, navigation, getDisplayNameFromChatRoom]);
+  if (roomMeta[room.id]?.blocked) {
+    Alert.alert('Blocked', 'Unblock this contact to send messages.');
+    return;
+  }
+  navigation.getParent()?.navigate('ChatScreen', {
+    chatRoom: room,
+    currentUser,
+    contactName: getDisplayNameFromChatRoom(room, currentUser),
+  });
+}, [roomMeta, currentUser, navigation, getDisplayNameFromChatRoom]);
 
   // ✅ Fixed date logic: compare calendar dates, not arbitrary 24h buckets
   const formatMessageTime = useCallback((ts) => {

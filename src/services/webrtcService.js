@@ -2,7 +2,6 @@ import {
     RTCPeerConnection,
     mediaDevices,
     RTCIceCandidate,
-    // ✅ RTCSessionDescription intentionally NOT used — causes NULL bug
 } from 'react-native-webrtc';
 import chatService from './chatService';
 
@@ -19,9 +18,9 @@ class WebRTCService {
         this.localStream          = null;
         this.remoteStream         = null;
         this.pendingIceCandidates = [];
-        this.currentRoomId        = null; // ✅ Track active roomId as instance var
-        this.onRemoteStream       = null; // ✅ Callback for remote stream (set by screen)
-        this.onConnectionState    = null; // ✅ Callback for connection state (set by screen)
+        this.currentRoomId        = null;  
+        this.onRemoteStream       = null;  
+        this.onConnectionState    = null;  
     }
 
     async init(roomId) {

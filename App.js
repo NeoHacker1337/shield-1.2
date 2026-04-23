@@ -53,13 +53,13 @@ import chatService from './src/services/chatService';
 
 const Stack = createNativeStackNavigator();
 
-/* ✅ GLOBAL NAVIGATION REF (FIX) */
+/* ✅ GLOBAL NAVIGATION REF */
 export const globalNavigationRef = createNavigationContainerRef();
 
 const ONBOARDING_KEY = 'shield_onboarding_completed';
 const AUTH_SERVICE = 'shield-auth';
 
-/* ───────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────────── */
 
 const AppNavigator = ({
   hasOnboarded,
@@ -73,44 +73,60 @@ const AppNavigator = ({
   const [globalUserId, setGlobalUserId] = useState(null);
   const { activeRoomId } = useActiveRoom();
 
-  /* Load user ID */
+  // ── Load user ID on mount AND whenever auth state might change ────────────
   useEffect(() => {
-    AsyncStorage.getItem('current_user_id').then(id => {
-      if (id) {
-        setGlobalUserId(parseInt(id, 10));
-        console.log('[AppNavigator] Global userId loaded:', id);
+    const loadUserId = async () => {
+      try {
+        // Try AsyncStorage first (fastest)
+        const cachedId = await AsyncStorage.getItem('current_user_id');
+        if (cachedId) {
+          setGlobalUserId(parseInt(cachedId, 10));
+          console.log('[AppNavigator] UserId from cache:', cachedId);
+          return;
+        }
+
+        // Fallback: fetch from auth service
+        const user = await AuthService.getCurrentUser();
+        if (user?.id) {
+          await AsyncStorage.setItem('current_user_id', String(user.id));
+          setGlobalUserId(user.id);
+          console.log('[AppNavigator] UserId from auth service:', user.id);
+        }
+      } catch (e) {
+        console.log('[AppNavigator] Failed to load userId:', e?.message);
       }
-    });
+    };
+
+    loadUserId();
   }, []);
 
-  /* Load rooms globally (FIXED SAFE VERSION) */
+  // ── Load rooms globally so the call listener has rooms immediately ─────────
   useEffect(() => {
+    if (!globalUserId) return;
+
     const loadRooms = async () => {
       try {
         const roomsRes = await chatService.getChatRooms();
-
         const rooms = Array.isArray(roomsRes?.data)
           ? roomsRes.data
           : Array.isArray(roomsRes)
             ? roomsRes
             : [];
 
-        const ids = rooms.map(r => String(r.id));
-
-        await AsyncStorage.setItem('watched_room_ids', JSON.stringify(ids));
-
-        console.log('[AppNavigator] Rooms loaded globally:', ids);
+        if (rooms.length > 0) {
+          const ids = rooms.map(r => String(r.id));
+          await AsyncStorage.setItem('watched_room_ids', JSON.stringify(ids));
+          console.log('[AppNavigator] Rooms loaded globally:', ids.length);
+        }
       } catch (e) {
         console.log('[AppNavigator] Failed to load rooms:', e?.message);
       }
     };
 
-    if (globalUserId) {
-      loadRooms();
-    }
+    loadRooms();
   }, [globalUserId]);
 
-  /* GLOBAL CALL LISTENER */
+  // ── Global call listener — now truly global ────────────────────────────────
   useGlobalCallListener({
     navigationRef,
     currentUserId: globalUserId,
@@ -131,79 +147,63 @@ const AppNavigator = ({
   return (
     <NavigationContainer ref={navigationRef}>
       <StatusBar barStyle="light-content" />
+      <Stack.Navigator
+        initialRouteName={initialRouteName}
+        screenOptions={{ headerShown: false }}>
 
-      <Stack.Navigator initialRouteName={initialRouteName}>
+        {/* Onboarding */}
+        <Stack.Screen name="OnBoarding" component={OnBoardingScreen} />
+        <Stack.Screen name="SetPassword" component={SetPasswordScreen} />
+        <Stack.Screen name="SecurityQuestions" component={SecurityQuestionsScreen} />
 
-        <Stack.Screen name="OnBoarding" component={OnBoardingScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="SetPassword" component={SetPasswordScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="SecurityQuestions" component={SecurityQuestionsScreen} options={{ headerShown: false }} />
-
-        <Stack.Screen name="PasswordEntry" options={{ headerShown: false }}>
+        {/* Auth */}
+        <Stack.Screen name="PasswordEntry">
           {(props) => (
             <PasswordEntryScreen
               {...props}
-              lockMode={hasPasscode && !isUnlocked}
-              onUnlocked={() => setIsUnlocked(true)}
+              onUnlock={() => setIsUnlocked(true)}
             />
           )}
         </Stack.Screen>
+        <Stack.Screen name="PasswordRecovery" component={PasswordRecoveryScreen} />
+        <Stack.Screen name="RecoverPin" component={RecoverPinScreen} />
 
-        <Stack.Screen name="PasswordRecovery" component={PasswordRecoveryScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Activation" component={ActivationScreen} options={{ gestureEnabled: false }} />
+        {/* Activation */}
+        <Stack.Screen name="Activation" component={ActivationScreen} />
 
-        <Stack.Screen name="MainTabs" component={BottomTabNavigator} options={{ headerShown: false }} />
-        <Stack.Screen name="Settings" component={SettingScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Security" component={SecurityScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="FileLocker" component={FileLockerScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="ShowSecurityQuestion" component={ShowSecurityQuestionScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="ChatScreen" component={ChatScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Chat" component={Chat} options={{ headerShown: false }} />
-        <Stack.Screen name="Profile" component={ProfileScreen} options={{ headerShown: false }} />
-
-        <Stack.Screen name="GetPremium" component={GetPremiumScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Feedback" component={FeedbackScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="AboutUs" component={AboutUsScreen} options={{ headerShown: false }} />
-
-        <Stack.Screen name="SupportDetails" component={SupportDetailsScreen} />
+        {/* Main App */}
+        <Stack.Screen name="MainTabs" component={BottomTabNavigator} />
+        <Stack.Screen name="Settings" component={SettingScreen} />
+        <Stack.Screen name="Security" component={SecurityScreen} />
+        <Stack.Screen name="FileLocker" component={FileLockerScreen} />
+        <Stack.Screen name="ShowSecurityQuestion" component={ShowSecurityQuestionScreen} />
+        <Stack.Screen name="Chat" component={ChatScreen} />
+        <Stack.Screen name="ChatSystem" component={Chat} />
+        <Stack.Screen name="Profile" component={ProfileScreen} />
+        <Stack.Screen name="GetPremium" component={GetPremiumScreen} />
+        <Stack.Screen name="Feedback" component={FeedbackScreen} />
+        <Stack.Screen name="AboutUs" component={AboutUsScreen} />
         <Stack.Screen name="FileViewer" component={FileViewerScreen} />
-        <Stack.Screen name="FileBrowser" component={FileBrowserScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="LockedChats" component={LockedChatsScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="RecoverPin" component={RecoverPinScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Restore" component={RestoreScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="StorageData" component={StorageDataScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="AllInvitations" component={AllInvitationsScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Scan" component={ScanScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="ReferralQrScreen" component={ReferralQrScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="ShareProfileScreen" component={ShareProfileScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="ContactProfile" component={ContactProfileScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="SupportDetails" component={SupportDetailsScreen} />
+        <Stack.Screen name="FileBrowser" component={FileBrowserScreen} />
+        <Stack.Screen name="LockedChats" component={LockedChatsScreen} />
+        <Stack.Screen name="Restore" component={RestoreScreen} />
+        <Stack.Screen name="StorageData" component={StorageDataScreen} />
+        <Stack.Screen name="AllInvitations" component={AllInvitationsScreen} />
+        <Stack.Screen name="Scan" component={ScanScreen} />
+        <Stack.Screen name="ReferralQr" component={ReferralQrScreen} />
+        <Stack.Screen name="ShareProfile" component={ShareProfileScreen} />
+        <Stack.Screen name="ContactProfile" component={ContactProfileScreen} />
 
-        {/* CALL SCREENS */}
-        <Stack.Screen
-          name="IncomingCall"
-          component={IncomingCallScreen}
-          options={{
-            presentation: 'fullScreenModal',
-            headerShown: false,
-            gestureEnabled: false,
-          }}
-        />
-
-        <Stack.Screen
-          name="AudioCall"
-          component={AudioCallScreen}
-          options={{
-            presentation: 'fullScreenModal',
-            headerShown: false,
-            gestureEnabled: false,
-          }}
-        />
-
+        {/* Call Screens */}
+        <Stack.Screen name="AudioCall" component={AudioCallScreen} />
+        <Stack.Screen name="IncomingCall" component={IncomingCallScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
 };
 
-/* ───────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────────── */
 
 const App = () => {
   const [isReady, setIsReady] = useState(false);
@@ -238,6 +238,7 @@ const App = () => {
 
         if (token) {
           try {
+            // ✅ Always save current_user_id on app start
             const user = await AuthService.getCurrentUser();
             if (user?.id) {
               await AsyncStorage.setItem('current_user_id', String(user.id));
