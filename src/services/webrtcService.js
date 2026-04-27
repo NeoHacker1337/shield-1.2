@@ -5,12 +5,27 @@ import {
     RTCIceCandidate,
     RTCSessionDescription,
 } from 'react-native-webrtc';
-import chatService from './chatService'; // must have sendOffer, sendAnswer, sendIceCandidate
+import chatService from './chatService';
 
 const configuration = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+        {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
+        {
+            urls: 'turns:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
     ],
 };
 
@@ -124,7 +139,7 @@ class WebRTCService {
         if (!this.pc) throw new Error('[webrtcService] createAnswer — PC is null');
 
         if (this._answerInProgress) {
-            console.warn('[webrtcService] createAnswer already in progress — skipping duplicate call');
+            console.warn('[webrtcService] createAnswer already in progress — skipping');
             return null;
         }
 
@@ -139,66 +154,60 @@ class WebRTCService {
         try {
             console.log('[webrtcService] createAnswer started | signalingState:', this.pc.signalingState);
 
-            // ✅ normalize offer payload FIRST
             let sdpData = offer;
             if (offer?.offer) sdpData = offer.offer;
             else if (offer?.sdp && typeof offer.sdp === 'object') sdpData = offer.sdp;
 
-            // ✅ debug logs AFTER sdpData is declared
             console.log('[webrtcService] sdpData.type:', sdpData?.type);
             console.log('[webrtcService] sdpData.sdp length:', sdpData?.sdp?.length);
-            console.log('[webrtcService] sdpData.sdp preview:', sdpData?.sdp?.substring(0, 100));
 
             if (!sdpData?.type || !sdpData?.sdp) {
-                throw new Error(`Invalid offer — type:${sdpData?.type} sdp:${sdpData?.sdp ? 'ok' : 'missing'}`);
+                throw new Error(
+                    `Invalid offer — type:${sdpData?.type} sdp:${sdpData?.sdp ? 'ok' : 'missing'}`
+                );
             }
 
-            const cleanSdp = this.cleanSdp(sdpData.sdp);
+            const cleanedSdp = this.cleanSdp(sdpData.sdp);
+            console.log('[webrtcService] SDP has real CRLF:', cleanedSdp.includes('\r\n'));
 
-            console.log('[webrtcService] SDP line 1:', cleanSdp.split('\r\n')[0]);
-            console.log('[webrtcService] SDP has real CRLF:', cleanSdp.includes('\r\n'));
-
-            // ✅ use RTCSessionDescription to avoid "SessionDescription is NULL"
             try {
                 await this.pc.setRemoteDescription(
-                    new RTCSessionDescription({ type: sdpData.type, sdp: cleanSdp })
+                    new RTCSessionDescription({ type: sdpData.type, sdp: cleanedSdp })
                 );
             } catch (descErr) {
                 console.warn('[webrtcService] RTCSessionDescription failed, trying plain object:', descErr?.message);
-                await this.pc.setRemoteDescription({ type: sdpData.type, sdp: cleanSdp });
+                await this.pc.setRemoteDescription({ type: sdpData.type, sdp: cleanedSdp });
             }
-            this._remoteDescSet = true;
-            console.log('[webrtcService] setRemoteDescription OK ✅ | signalingState:', this.pc.signalingState);
 
             this._remoteDescSet = true;
             console.log('[webrtcService] setRemoteDescription OK ✅ | signalingState:', this.pc.signalingState);
 
-            // flush ICE candidates queued before remoteDescription was set
             await this.flushPendingIceCandidates();
 
             const answer = await this.pc.createAnswer();
-            console.log('[webrtcService] createAnswer OK ✅ | signalingState:', this.pc.signalingState);
-
             await this.pc.setLocalDescription(answer);
             console.log('[webrtcService] setLocalDescription OK ✅ | signalingState:', this.pc.signalingState);
 
             const answerPayload = { type: answer.type, sdp: answer.sdp };
 
-            // ✅ use sendCallAnswer (matches your chatService method name)
+            // ✅ Send directly — don't rely on AudioCallScreen
             await chatService.sendCallAnswer({
                 room_id: this.currentRoomId,
                 answer: answerPayload,
             });
-            console.log('[webrtcService] Answer posted to server ✅');
+            console.log('[webrtcService] Answer sent to server ✅');
 
             return answerPayload;
 
         } catch (e) {
             console.error('[webrtcService] createAnswer ERROR:', e?.message);
-            this._answerInProgress = false; // unlock on error so a single retry is possible
             throw e;
+        } finally {
+            this._answerInProgress = false; // ✅ always resets
         }
     }
+
+
     async setRemoteAnswer(answer) {
         if (!this.pc) throw new Error('[webrtcService] setRemoteAnswer — PC is null');
         if (this.pc.signalingState !== 'have-local-offer') {
@@ -267,13 +276,26 @@ class WebRTCService {
     cleanSdp(sdp) {
         if (!sdp) return sdp;
 
-        // unescape if double-escaped
-        if (sdp.includes('\\r\\n')) sdp = sdp.replace(/\\r\\n/g, '\r\n');
-        if (sdp.includes('\\r')) sdp = sdp.replace(/\\r/g, '\r');
-        if (sdp.includes('\\n')) sdp = sdp.replace(/\\n/g, '\n');
+        // Step 1: Unescape literal \r\n text (from JSON double-encoding)
+        if (sdp.includes('\\r\\n')) {
+            sdp = sdp.replace(/\\r\\n/g, '\n');  // → \n directly, not \r\n
+            console.log('[webrtcService] Fixed literal \\r\\n');
+        }
 
-        // ✅ strip all \r — Android react-native-webrtc needs \n only
-        sdp = sdp.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        if (sdp.includes('\\n')) {
+            sdp = sdp.replace(/\\n/g, '\n');
+            console.log('[webrtcService] Fixed literal \\n');
+        }
+
+        // Step 2: Normalize ALL line endings to \n only
+        // react-native-webrtc Android native layer requires \n, NOT \r\n
+        sdp = sdp.replace(/\r\n/g, '\n');  // CRLF → LF
+        sdp = sdp.replace(/\r/g, '\n');    // lone CR → LF
+
+        // Step 3: Ensure SDP ends with a newline
+        if (!sdp.endsWith('\n')) {
+            sdp = sdp + '\n';
+        }
 
         return sdp;
     }

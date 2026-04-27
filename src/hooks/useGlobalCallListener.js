@@ -124,8 +124,6 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
       _cachedRoomIds.forEach(id => {
         if (!roomsToCheck.includes(id)) roomsToCheck.push(id);
       });
-      roomsToCheck = roomsToCheck.slice(0, 5); // limit to avoid too many requests
-
       for (const roomId of roomsToCheck) {
         if (!isMountedRef.current) return;
 

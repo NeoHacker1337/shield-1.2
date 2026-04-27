@@ -321,6 +321,7 @@ const ChatScreen = ({ route, navigation }) => {
     handleBlock,
   } = useChatActions({
     currentUser,
+    chatRoom,
     setMessages,
     lastMessageIdRef,
     navigation,

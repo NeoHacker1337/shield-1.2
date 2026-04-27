@@ -8,6 +8,7 @@ const ENABLE_LOCAL_CALL_LOGIC = false;
 
 const useChatActions = ({
   currentUser,
+  chatRoom,
   setMessages,
   lastMessageIdRef,
   navigation,
@@ -161,9 +162,16 @@ const useChatActions = ({
     if (!ENABLE_LOCAL_CALL_LOGIC) {
       console.log('[useChatActions] AudioCall triggered — global system will handle');
 
-      // ✅ SAFE NAVIGATION (this triggers call screen only)
+      if (!chatRoom?.id || !currentUser?.id) {
+        Alert.alert('Audio Call', 'This chat is not ready for calling yet.');
+        return;
+      }
+
+      // Pass the full call context expected by AudioCallScreen.
       navigation?.navigate?.('AudioCall', {
-        // you can pass params if needed
+        roomId: chatRoom.id,
+        userId: currentUser.id,
+        isCaller: true,
       });
 
       return;
@@ -174,7 +182,7 @@ const useChatActions = ({
       'Audio calling is not yet available.',
       [{ text: 'OK', style: 'cancel' }]
     );
-  }, [navigation]);
+  }, [chatRoom?.id, currentUser?.id, navigation]);
 
   const handleVideoCall = useCallback(() => {
     Alert.alert(
