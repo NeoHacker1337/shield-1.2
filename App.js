@@ -46,9 +46,15 @@ import ContactProfileScreen from './src/screens/ContactProfileScreen';
 import AudioCallScreen from './src/screens/AudioCallScreen';
 import IncomingCallScreen from './src/screens/IncomingCallScreen';
 
+/* Video Call Screen */
+import VideoCallScreen from './src/screens/VideoCallScreen';
+import IncomingVideoCallScreen from './src/screens/IncomingVideoCallScreen';
+
 /* Global Call System */
 import { ActiveRoomProvider, useActiveRoom } from './src/context/ActiveRoomContext';
 import useGlobalCallListener from './src/hooks/useGlobalCallListener';
+import useGlobalVideoCallListener from './src/hooks/useGlobalVideoCallListener';
+
 import chatService from './src/services/chatService';
 
 const Stack = createNativeStackNavigator();
@@ -133,6 +139,12 @@ const AppNavigator = ({
     activeRoomId,
   });
 
+  useGlobalVideoCallListener({
+    navigationRef,
+    currentUserId: globalUserId,
+    activeRoomId,
+  });
+
   const initialRouteName =
     !hasOnboarded
       ? 'OnBoarding'
@@ -145,7 +157,7 @@ const AppNavigator = ({
             : 'MainTabs';
 
   return (
-    <NavigationContainer ref={navigationRef}>
+    <>
       <StatusBar barStyle="light-content" />
       <Stack.Navigator
         initialRouteName={initialRouteName}
@@ -198,8 +210,11 @@ const AppNavigator = ({
         {/* Call Screens */}
         <Stack.Screen name="AudioCall" component={AudioCallScreen} />
         <Stack.Screen name="IncomingCall" component={IncomingCallScreen} />
+
+        <Stack.Screen name="VideoCallScreen" component={VideoCallScreen} />
+        <Stack.Screen name="IncomingVideoCallScreen" component={IncomingVideoCallScreen} />
       </Stack.Navigator>
-    </NavigationContainer>
+    </>
   );
 };
 
@@ -270,20 +285,24 @@ const App = () => {
   if (!isReady) return null;
 
   return (
-    <ChatVisibilityProvider>
-      <SecurityVisibilityProvider>
-        <ActiveRoomProvider>
-          <AppNavigator
-            hasOnboarded={hasOnboarded}
-            hasCredentials={hasCredentials}
-            isActivated={isActivated}
-            hasPasscode={hasPasscode}
-            isUnlocked={isUnlocked}
-            setIsUnlocked={setIsUnlocked}
-          />
-        </ActiveRoomProvider>
-      </SecurityVisibilityProvider>
-    </ChatVisibilityProvider>
+    <NavigationContainer ref={globalNavigationRef}>
+      <ChatVisibilityProvider>
+        <SecurityVisibilityProvider>
+          <ActiveRoomProvider>
+
+            <AppNavigator
+              hasOnboarded={hasOnboarded}
+              hasCredentials={hasCredentials}
+              isActivated={isActivated}
+              hasPasscode={hasPasscode}
+              isUnlocked={isUnlocked}
+              setIsUnlocked={setIsUnlocked}
+            />
+
+          </ActiveRoomProvider>
+        </SecurityVisibilityProvider>
+      </ChatVisibilityProvider>
+    </NavigationContainer>
   );
 };
 

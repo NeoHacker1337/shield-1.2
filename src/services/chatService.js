@@ -150,6 +150,45 @@ const chatService = {
   getCallStatus: (roomId) => api.get(`/v1/call/status/${roomId}`),
   // Audio Call Feature End
 
+  /**
+ * chatService_video_additions.js
+ * ───────────────────────────────
+ * ADD these methods to your existing chatService.js.
+ * They are completely separate from audio call methods.
+ * Uses /video-call/* routes on the backend.
+ *
+ * Paste each function into your chatService class/object.
+ */
+
+  // ─── Video Call Signaling ────────────────────────────
+
+  sendVideoCallOffer: (data) =>
+    api.post('/video-call/offer', data),
+
+  getVideoCallOffer: (roomId) =>
+    api.get(`/video-call/offer/${roomId}`),
+
+  sendVideoCallAnswer: (data) =>
+    api.post('/video-call/answer', data),
+
+  getVideoCallAnswer: (roomId) =>
+    api.get(`/video-call/answer/${roomId}`),
+
+  getVideoCallStatus: (roomId) =>
+    api.get(`/video-call/status/${roomId}`),
+
+  endVideoCall: (roomId) =>
+    api.post('/video-call/end', { room_id: roomId }),
+
+  // ─── Video ICE Candidates ────────────────────────────
+
+  sendVideoIceCandidate: (data) =>
+    api.post('/video-call/ice', data),
+
+  getVideoIceCandidates: (roomId) =>
+    api.get(`/video-call/ice/${roomId}`),
+
+
 };
 
 export default chatService;

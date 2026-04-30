@@ -90,10 +90,93 @@ const AudioCallScreen = ({ route, navigation }) => {
         startCall();
 
         // polling every 3s
+        // intervalRef.current = setInterval(async () => {
+        //     try {
+        //         const statusRes = await chatService.getCallStatus(roomId);
+
+        //         const callAge = Date.now() - callStartTime.current;
+        //         const callStatus = statusRes?.data?.status;
+
+        //         if (callStatus === 'ended' && !hasEndedCall.current && callAge > 15000) {
+        //             console.log('[AudioCallScreen] Remote ended call');
+        //             handleRemoteEndCall();
+        //             return;
+        //         }
+
+        //         if (isCaller) {
+        //             // caller waits for answer
+        //             if (!hasSetRemoteAnswer.current) {
+        //                 const res = await chatService.getCallAnswer(roomId);
+        //                 const answer = normalizeSessionDescription(res?.data, 'answer');
+
+        //                 if (answer) {
+        //                     await webrtcService.setRemoteAnswer(answer);
+        //                     hasSetRemoteAnswer.current = true;
+        //                     setStatus('Connected ✓');
+        //                 }
+        //             }
+        //         } else {
+        //             // receiver waits for offer
+        //             // RECEIVER (Device B)
+        //             if (!hasAnswered.current) {
+        //                 const res = await chatService.getCallOffer(roomId);
+        //                 const offer = normalizeSessionDescription(res?.data, 'offer');
+
+        //                 console.log('[AudioCallScreen] offer resolved:', offer?.type, '| sdp length:', offer?.sdp?.length);
+
+        //                 if (offer?.type && offer?.sdp) {
+        //                     try {
+        //                         const answer = await webrtcService.createAnswer(offer);
+
+        //                         if (answer) {
+        //                             // ✅ single send — only here, NOT inside webrtcService
+        //                             await chatService.sendCallAnswer({
+        //                                 room_id: roomId,
+        //                                 answer,
+        //                             });
+
+        //                             hasAnswered.current = true;
+        //                             setStatus('Connected ✓');
+
+        //                             // ✅ safety flush after answer is sent
+        //                             await webrtcService.flushPendingIceCandidates();
+        //                         }
+        //                     } catch (answerError) {
+        //                         console.log('[AudioCallScreen] createAnswer failed:', answerError?.message);
+        //                         const sigState = webrtcService.pc?.signalingState;
+        //                         if (sigState && sigState !== 'stable' && sigState !== 'closed') {
+        //                             await webrtcService.init(roomId);
+        //                         }
+        //                     }
+        //                 } else {
+        //                     console.log('[AudioCallScreen] offer not ready yet — waiting...');
+        //                 }
+        //             }
+        //         }
+
+        //         // ICE
+        //         const iceRes = await chatService.getIceCandidates(roomId);
+        //         const candidates = iceRes?.data?.candidates || [];
+
+        //         candidates.forEach((c, index) => {
+        //             if (!appliedIceCandidates.current.has(index)) {
+        //                 appliedIceCandidates.current.add(index);
+        //                 webrtcService.addIceCandidate(c);
+        //             }
+        //         });
+        //     } catch (e) {
+        //         if (e?.response?.status === 429) {
+        //             console.log('[AudioCallScreen] Rate limited — skipping tick');
+        //             return;
+        //         }
+        //         console.log('[AudioCallScreen] Poll error:', e?.message);
+        //     }
+        // }, 3000);
+
         intervalRef.current = setInterval(async () => {
             try {
+                // ── Call status check ──
                 const statusRes = await chatService.getCallStatus(roomId);
-
                 const callAge = Date.now() - callStartTime.current;
                 const callStatus = statusRes?.data?.status;
 
@@ -103,67 +186,61 @@ const AudioCallScreen = ({ route, navigation }) => {
                     return;
                 }
 
-                if (isCaller) {
-                    // caller waits for answer
-                    if (!hasSetRemoteAnswer.current) {
-                        const res = await chatService.getCallAnswer(roomId);
-                        const answer = normalizeSessionDescription(res?.data, 'answer');
+                // ── Caller: wait for answer ──
+                if (isCaller && !hasSetRemoteAnswer.current) {
+                    const res = await chatService.getCallAnswer(roomId);
+                    const answer = normalizeSessionDescription(res?.data, 'answer');
 
-                        if (answer) {
-                            await webrtcService.setRemoteAnswer(answer);
-                            hasSetRemoteAnswer.current = true;
-                            setStatus('Connected ✓');
-                        }
-                    }
-                } else {
-                    // receiver waits for offer
-                    // RECEIVER (Device B)
-                    if (!hasAnswered.current) {
-                        const res = await chatService.getCallOffer(roomId);
-                        const offer = normalizeSessionDescription(res?.data, 'offer');
-
-                        console.log('[AudioCallScreen] offer resolved:', offer?.type, '| sdp length:', offer?.sdp?.length);
-
-                        if (offer?.type && offer?.sdp) {
-                            try {
-                                const answer = await webrtcService.createAnswer(offer);
-
-                                if (answer) {
-                                    // ✅ single send — only here, NOT inside webrtcService
-                                    await chatService.sendCallAnswer({
-                                        room_id: roomId,
-                                        answer,
-                                    });
-
-                                    hasAnswered.current = true;
-                                    setStatus('Connected ✓');
-
-                                    // ✅ safety flush after answer is sent
-                                    await webrtcService.flushPendingIceCandidates();
-                                }
-                            } catch (answerError) {
-                                console.log('[AudioCallScreen] createAnswer failed:', answerError?.message);
-                                const sigState = webrtcService.pc?.signalingState;
-                                if (sigState && sigState !== 'stable' && sigState !== 'closed') {
-                                    await webrtcService.init(roomId);
-                                }
-                            }
-                        } else {
-                            console.log('[AudioCallScreen] offer not ready yet — waiting...');
-                        }
+                    if (answer) {
+                        console.log('[AudioCallScreen] Answer found via poll ✅ — setting remote answer');
+                        await webrtcService.setRemoteAnswer(answer);
+                        hasSetRemoteAnswer.current = true;
+                        console.log('[AudioCallScreen] Remote answer set ✅ — ICE flushing...');
                     }
                 }
 
-                // ICE
+                // ── Receiver: wait for offer, then answer ──
+                if (!isCaller && !hasAnswered.current) {
+                    const res = await chatService.getCallOffer(roomId);
+                    const offer = normalizeSessionDescription(res?.data, 'offer');
+
+                    if (offer?.type && offer?.sdp) {
+                        console.log('[AudioCallScreen] Offer ready | type:', offer.type, '| sdp length:', offer.sdp.length);
+                        try {
+                            const answer = await webrtcService.createAnswer(offer);
+                            if (answer) {
+                                hasAnswered.current = true;
+                                setStatus('Connecting...');
+                                console.log('[AudioCallScreen] createAnswer complete ✅');
+                            }
+                        } catch (answerError) {
+                            console.log('[AudioCallScreen] createAnswer failed:', answerError?.message);
+                            const sigState = webrtcService.pc?.signalingState;
+                            if (sigState && sigState !== 'stable') {
+                                await webrtcService.init(roomId);
+                            }
+                        }
+                    } else {
+                        console.log('[AudioCallScreen] Offer not ready yet — waiting...');
+                    }
+                }
+
+                // ── ICE exchange (both sides) ──
                 const iceRes = await chatService.getIceCandidates(roomId);
                 const candidates = iceRes?.data?.candidates || [];
 
-                candidates.forEach((c, index) => {
-                    if (!appliedIceCandidates.current.has(index)) {
-                        appliedIceCandidates.current.add(index);
+                console.log('[AudioCallScreen] ICE poll | found:', candidates.length,
+                    '| applied:', appliedIceCandidates.current.size);
+
+                candidates.forEach((c) => {
+                    const key = c?.candidate ?? JSON.stringify(c);
+                    if (key && !appliedIceCandidates.current.has(key)) {
+                        appliedIceCandidates.current.add(key);
                         webrtcService.addIceCandidate(c);
+                        console.log('[AudioCallScreen] ICE candidate applied ✅');
                     }
                 });
+
             } catch (e) {
                 if (e?.response?.status === 429) {
                     console.log('[AudioCallScreen] Rate limited — skipping tick');

@@ -1,7 +1,7 @@
 // src/context/GlobalCallContext.js
 import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
 import { AppState } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+// import { useNavigation } from '@react-navigation/native';
 import chatService from '../services/chatService';
 
 const GlobalCallContext = createContext(null);
