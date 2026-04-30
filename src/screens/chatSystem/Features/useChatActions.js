@@ -2,6 +2,7 @@
 import { useCallback } from 'react';
 import { Alert } from 'react-native';
 import { handleApiError } from '../../../utils/errorHandler';
+import { getDisplayNameFromChatRoom } from '../../../utils/chatUtils';
 
 // 🚨 GLOBAL FLAG (future-safe for call system)
 const ENABLE_LOCAL_CALL_LOGIC = false;
@@ -167,11 +168,14 @@ const useChatActions = ({
         return;
       }
 
+      const callerName = getDisplayNameFromChatRoom(chatRoom, currentUser);
+
       // Pass the full call context expected by AudioCallScreen.
       navigation?.navigate?.('AudioCall', {
         roomId: chatRoom.id,
         userId: currentUser.id,
         isCaller: true,
+        callerName,
       });
 
       return;
@@ -185,12 +189,17 @@ const useChatActions = ({
   }, [chatRoom?.id, currentUser?.id, navigation]);
 
   const handleVideoCall = useCallback(() => {
-    Alert.alert(
-      'Video Call',
-      'Video calling is not yet available.',
-      [{ text: 'OK', style: 'cancel' }]
-    );
-  }, []);
+    if (!chatRoom?.id || !currentUser?.id) {
+      Alert.alert('Video Call', 'This chat is not ready for video calling yet.');
+      return;
+    }
+
+    navigation?.navigate?.('VideoCallScreen', {
+      roomId: chatRoom.id,
+      userId: currentUser.id,
+      isCaller: true,
+    });
+  }, [chatRoom?.id, currentUser?.id, navigation]);
 
   // ─────────────────────────────────────────────────────────────
   // NAVIGATION ACTIONS

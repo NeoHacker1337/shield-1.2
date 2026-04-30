@@ -1,91 +1,197 @@
-/**
- * useGlobalCallListener.js (FIXED)
- * ───────────────────────────────
- * Uses navigationRef instead of useNavigation()
- * Safe for global usage (App.js / RootNavigator)
- */
-
-import { useEffect, useRef } from 'react';
+// src/hooks/useGlobalVideoCallListener.js
+import { useEffect, useRef, useCallback } from 'react';
+import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import chatService from '../services/chatService';
 
-const useGlobalCallListener = ({ navigationRef }) => {
-    const channelRef = useRef(null);
-    const userIdRef  = useRef(null);
+const POLL_INTERVAL = 3000;
+const ROOM_REFRESH_INTERVAL = 15000;
 
-    useEffect(() => {
-        const subscribeToCallEvents = async () => {
-            try {
-                // ── Get logged-in user ──
-                const userStr = await AsyncStorage.getItem('user');
-                const user    = userStr ? JSON.parse(userStr) : null;
-                const userId  = user?.id;
+let cachedRoomIds = new Set();
+let lastRoomFetch = 0;
 
-                if (!userId) {
-                    console.warn('[GlobalCallListener] No user found — skipping subscription');
-                    return;
-                }
+const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId }) => {
+  const intervalRef = useRef(null);
+  const isNavigating = useRef(false);
+  const activeRoomRef = useRef(activeRoomId);
+  const userIdRef = useRef(currentUserId);
+  const isMountedRef = useRef(true);
 
-                // ── Wait for Echo ──
-                if (!global.Echo) {
-                    console.warn('[GlobalCallListener] Echo not ready — retrying...');
-                    setTimeout(subscribeToCallEvents, 1000);
-                    return;
-                }
+  useEffect(() => { activeRoomRef.current = activeRoomId; }, [activeRoomId]);
+  useEffect(() => { userIdRef.current = currentUserId; }, [currentUserId]);
 
-                userIdRef.current = userId;
+  const getActiveRouteName = useCallback((state) => {
+    if (!state?.routes?.length) return null;
+    const route = state.routes[state.index ?? state.routes.length - 1];
+    if (route.state) return getActiveRouteName(route.state);
+    return route.name;
+  }, []);
 
-                console.log('[GlobalCallListener] Subscribing | userId:', userId);
+  const refreshRoomIds = useCallback(async () => {
+    try {
+      const now = Date.now();
+      if (now - lastRoomFetch < ROOM_REFRESH_INTERVAL && cachedRoomIds.size > 0) {
+        return;
+      }
+      lastRoomFetch = now;
 
-                // ── Subscribe ──
-                channelRef.current = global.Echo
-                    .private(`user.${userId}`)
-                    .listen('CallOfferEvent', (e) => {
-                        const { room_id, caller_id, caller_name } = e;
+      const res = await chatService.getChatRooms();
+      const rooms = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
 
-                        console.log(
-                            '[GlobalCallListener] 📞 Incoming call | room:',
-                            room_id, '| caller:', caller_id
-                        );
+      if (rooms.length > 0) {
+        cachedRoomIds = new Set(rooms.map(r => String(r.id)));
+        await AsyncStorage.setItem('watched_room_ids', JSON.stringify([...cachedRoomIds]));
+        return;
+      }
 
-                        // Skip if already in call
-                        if (global.isCallActive) {
-                            console.log('[GlobalCallListener] Already in call — ignoring');
-                            return;
-                        }
+      const stored = await AsyncStorage.getItem('watched_room_ids');
+      if (stored) {
+        const ids = JSON.parse(stored);
+        if (Array.isArray(ids)) {
+          ids.forEach(id => cachedRoomIds.add(String(id)));
+        }
+      }
+    } catch (e) {
+      try {
+        const stored = await AsyncStorage.getItem('watched_room_ids');
+        if (stored) {
+          const ids = JSON.parse(stored);
+          if (Array.isArray(ids)) {
+            ids.forEach(id => cachedRoomIds.add(String(id)));
+          }
+        }
+      } catch {}
+    }
+  }, []);
 
-                        // ✅ SAFE NAVIGATION
-                        if (navigationRef?.current) {
-                            navigationRef.current.navigate('IncomingCall', {
-                                roomId:     room_id,
-                                callerId:   caller_id,
-                                callerName: caller_name ?? null,
-                            });
-                        } else {
-                            console.warn('[GlobalCallListener] Navigation not ready');
-                        }
-                    });
+  const stopPolling = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
 
-                console.log('[GlobalCallListener] ✅ Subscribed');
+  const pollTick = useCallback(async () => {
+    try {
+      if (!isMountedRef.current || isNavigating.current || global.isCallActive) return;
 
-            } catch (e) {
-                console.error('[GlobalCallListener] Error:', e?.message);
+      const justEnded = await AsyncStorage.getItem('call_just_ended');
+      if (justEnded === 'true') {
+        await AsyncStorage.removeItem('call_just_ended');
+        isNavigating.current = false;
+        return;
+      }
+
+      const userId = userIdRef.current;
+      if (!userId) return;
+
+      const nav = navigationRef?.current;
+      if (!nav || !nav.isReady?.()) return;
+
+      const topScreen = getActiveRouteName(nav.getState());
+      if (
+        topScreen === 'IncomingVideoCallScreen' ||
+        topScreen === 'VideoCallScreen' ||
+        topScreen === 'IncomingCall' ||
+        topScreen === 'AudioCall'
+      ) {
+        return;
+      }
+
+      await refreshRoomIds();
+      if (cachedRoomIds.size === 0) return;
+
+      const roomsToCheck = [];
+      if (activeRoomRef.current) roomsToCheck.push(String(activeRoomRef.current));
+      cachedRoomIds.forEach(id => {
+        if (!roomsToCheck.includes(id)) roomsToCheck.push(id);
+      });
+
+      for (const roomId of roomsToCheck) {
+        if (!isMountedRef.current) return;
+
+        try {
+          const statusRes = await chatService.getVideoCallStatus(roomId);
+          const callStatus = statusRes?.data?.status;
+          if (callStatus !== 'active') continue;
+
+          const res = await chatService.getVideoCallOffer(roomId);
+          const offer = res?.data?.offer;
+          const callerId = res?.data?.caller_id;
+
+          if (!offer) continue;
+          if (String(callerId) === String(userId)) continue;
+
+          console.log('[GlobalVideoCallListener] Incoming video call | room:', roomId, '| caller:', callerId);
+
+          isNavigating.current = true;
+          nav.navigate('IncomingVideoCallScreen', {
+            roomId,
+            callerId,
+            callerName: 'Incoming Video Call',
+          });
+
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              isNavigating.current = false;
             }
-        };
+          }, 5000);
 
-        subscribeToCallEvents();
+          break;
+        } catch (e) {
+          if (e?.response?.status === 429) return;
+          if (__DEV__) console.log(`[GlobalVideoCallListener] Room ${roomId} error:`, e?.message);
+        }
+      }
+    } catch (e) {
+      if (__DEV__) console.log('[GlobalVideoCallListener] Poll error:', e?.message);
+    }
+  }, [getActiveRouteName, navigationRef, refreshRoomIds]);
 
-        return () => {
-            if (channelRef.current) {
-                try {
-                    channelRef.current.stopListening('CallOfferEvent');
-                    console.log('[GlobalCallListener] Stopped listening');
-                } catch (e) {
-                    console.warn('[GlobalCallListener] stopListening error:', e?.message);
-                }
-                channelRef.current = null;
-            }
-        };
-    }, [navigationRef]);
+  const startPolling = useCallback(() => {
+    stopPolling();
+    isNavigating.current = false;
+    intervalRef.current = setInterval(pollTick, POLL_INTERVAL);
+  }, [pollTick, stopPolling]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        isNavigating.current = false;
+        lastRoomFetch = 0;
+        startPolling();
+      }
+    });
+    return () => sub.remove();
+  }, [startPolling]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    if (!currentUserId) {
+      stopPolling();
+      return;
+    }
+
+    console.log('[GlobalVideoCallListener] Started | userId:', currentUserId);
+    refreshRoomIds().then(() => {
+      if (isMountedRef.current) startPolling();
+    });
+
+    return () => {
+      isMountedRef.current = false;
+      stopPolling();
+      console.log('[GlobalVideoCallListener] Stopped');
+    };
+  }, [currentUserId, refreshRoomIds, startPolling, stopPolling]);
+
+  return {
+    restart: () => {
+      isNavigating.current = false;
+      lastRoomFetch = 0;
+      startPolling();
+    },
+  };
 };
 
-export default useGlobalCallListener;
+export default useGlobalVideoCallListener;

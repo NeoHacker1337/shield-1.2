@@ -49,6 +49,7 @@ const IncomingCallScreen = ({ route, navigation }) => {
       userId: callerId,
       roomId,
       isCaller: false,
+      callerName,
     });
   };
 

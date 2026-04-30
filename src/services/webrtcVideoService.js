@@ -77,10 +77,16 @@ class WebRTCVideoService {
         // ICE — send to server immediately
         this.pc.onicecandidate = (event) => {
             if (event.candidate && this.currentRoomId) {
+                const candidate = typeof event.candidate.toJSON === 'function'
+                    ? event.candidate.toJSON()
+                    : event.candidate;
+
                 console.log('[VideoService] ICE candidate generated | room:', this.currentRoomId);
                 chatService.sendVideoIceCandidate({
                     room_id:   this.currentRoomId,
-                    candidate: event.candidate,
+                    candidate,
+                }).catch(e => {
+                    console.log('[VideoService] send ICE error:', e?.message);
                 });
             }
         };
@@ -283,9 +289,7 @@ class WebRTCVideoService {
 
         const cleanedSdp = this.cleanSdp(sdpData.sdp);
 
-        await this.pc.setRemoteDescription(
-            new RTCSessionDescription({ type: sdpData.type, sdp: cleanedSdp })
-        );
+        await this._trySetRemoteDescription(sdpData.type, cleanedSdp);
 
         this._remoteDescSet = true;
         console.log('[VideoService] setRemoteAnswer OK ✅ | signalingState:', this.pc.signalingState);

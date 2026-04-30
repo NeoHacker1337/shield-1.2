@@ -163,30 +163,30 @@ const chatService = {
   // ─── Video Call Signaling ────────────────────────────
 
   sendVideoCallOffer: (data) =>
-    api.post('/video-call/offer', data),
+    api.post('/v1/video-call/offer', data),
 
   getVideoCallOffer: (roomId) =>
-    api.get(`/video-call/offer/${roomId}`),
+    api.get(`/v1/video-call/offer/${roomId}`),
 
   sendVideoCallAnswer: (data) =>
-    api.post('/video-call/answer', data),
+    api.post('/v1/video-call/answer', data),
 
   getVideoCallAnswer: (roomId) =>
-    api.get(`/video-call/answer/${roomId}`),
+    api.get(`/v1/video-call/answer/${roomId}`),
 
   getVideoCallStatus: (roomId) =>
-    api.get(`/video-call/status/${roomId}`),
+    api.get(`/v1/video-call/status/${roomId}`),
 
   endVideoCall: (roomId) =>
-    api.post('/video-call/end', { room_id: roomId }),
+    api.post('/v1/video-call/end', { room_id: roomId }),
 
   // ─── Video ICE Candidates ────────────────────────────
 
   sendVideoIceCandidate: (data) =>
-    api.post('/video-call/ice', data),
+    api.post('/v1/video-call/ice', data),
 
   getVideoIceCandidates: (roomId) =>
-    api.get(`/video-call/ice/${roomId}`),
+    api.get(`/v1/video-call/ice/${roomId}`),
 
 
 };

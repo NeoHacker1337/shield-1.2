@@ -6,7 +6,7 @@
  * Decline → goes back.
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -14,26 +14,43 @@ import {
     StyleSheet,
     Vibration,
     StatusBar,
+    BackHandler,
 } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import chatService from '../services/chatService';
 
 const IncomingVideoCallScreen = ({ route, navigation }) => {
     const { roomId, callerId, callerName } = route.params ?? {};
+    const hasActed = useRef(false);
 
     useEffect(() => {
         InCallManager.startRingtone('_BUNDLE_');
         Vibration.vibrate([0, 1000, 1000], true);
 
+        const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+            handleDecline();
+            return true;
+        });
+
         return () => {
             InCallManager.stopRingtone();
             Vibration.cancel();
+            backHandler.remove();
         };
     }, []);
 
-    const handleAccept = () => {
+    const handleAccept = async () => {
+        if (hasActed.current) return;
+        hasActed.current = true;
+
         console.log('[IncomingVideoCallScreen] Call accepted | roomId:', roomId, '| callerId:', callerId);
         InCallManager.stopRingtone();
         Vibration.cancel();
+
+        try {
+            await AsyncStorage.setItem('call_just_ended', 'true');
+        } catch (e) {}
 
         navigation.replace('VideoCallScreen', {
             roomId,
@@ -43,11 +60,26 @@ const IncomingVideoCallScreen = ({ route, navigation }) => {
         });
     };
 
-    const handleDecline = () => {
+    const handleDecline = async () => {
+        if (hasActed.current) return;
+        hasActed.current = true;
+
         console.log('[IncomingVideoCallScreen] Call declined | roomId:', roomId);
         InCallManager.stopRingtone();
         Vibration.cancel();
-        navigation.goBack();
+
+        try {
+            await chatService.endVideoCall(roomId);
+            await AsyncStorage.setItem('call_just_ended', 'true');
+        } catch (e) {
+            console.log('[IncomingVideoCallScreen] decline error:', e?.message);
+        }
+
+        if (navigation.canGoBack()) {
+            navigation.goBack();
+        } else {
+            navigation.replace('MainTabs');
+        }
     };
 
     return (

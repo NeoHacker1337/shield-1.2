@@ -233,6 +233,7 @@ const VideoCallScreen = ({ route, navigation }) => {
             InCallManager.stop();
             if (!hasEndedCall.current) {
                 hasEndedCall.current = true;
+                global.isCallActive = false;
                 webrtcVideoService.close();
                 chatService.endVideoCall(roomId);
                 AsyncStorage.setItem('call_just_ended', 'true');
@@ -265,6 +266,7 @@ const VideoCallScreen = ({ route, navigation }) => {
             global.isCallActive = true;
             InCallManager.start({ media: 'video' });
             InCallManager.setKeepScreenOn(true);
+            InCallManager.setForceSpeakerphoneOn(true);
 
             if (isCaller) {
                 await webrtcVideoService.startCaller(roomId, userId);
@@ -314,6 +316,7 @@ const VideoCallScreen = ({ route, navigation }) => {
         setStatus('Call Ended');
         setTimeout(() => {
             if (navigation.canGoBack()) navigation.goBack();
+            else navigation.replace('MainTabs');
         }, 1500);
     };
 

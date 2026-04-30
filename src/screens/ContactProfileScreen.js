@@ -140,6 +140,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
 
   // ── Contact name resolution (phonebook first, server fallback) ──
   const { localContactName } = useContactName({ chatRoom, currentUser });
+  const displayName = getDisplayNameFromChatRoom(chatRoom, currentUser);
 
   const [resolvedNameMeta, setResolvedNameMeta] = useState(null);
 
@@ -162,8 +163,6 @@ const ContactProfileScreen = ({ route, navigation }) => {
   // 3. localContactName from hook
   // 4. serverContactName from route params
   // 5. displayName fallback
-  const displayName = getDisplayNameFromChatRoom(chatRoom, currentUser);
-
   const finalName =
     resolvedNameMeta?.name ||        // phonebook or server resolved
     localContactName ||              // local hook
@@ -257,9 +256,29 @@ const ContactProfileScreen = ({ route, navigation }) => {
       return;
     }
 
-    navigation.navigate('AudioCall', { userId: currentUser.id, roomId: chatRoom.id, isCaller: true, });
+    navigation.navigate('AudioCall', {
+      userId: currentUser.id,
+      roomId: chatRoom.id,
+      isCaller: true,
+      callerName: finalName,
+    });
   },
-    [chatRoom, currentUser, navigation]);
+    [chatRoom, currentUser, finalName, navigation]);
+
+  const handleStartVideoCall = useCallback(() => {
+    setShowVideoCallModal(false);
+    if (!chatRoom?.id || !currentUser?.id) {
+      Alert.alert('Error', 'Cannot start video call.');
+      return;
+    }
+
+    navigation.navigate('VideoCallScreen', {
+      userId: currentUser.id,
+      roomId: chatRoom.id,
+      isCaller: true,
+      callerName: finalName,
+    });
+  }, [chatRoom?.id, currentUser?.id, finalName, navigation]);
 
 
   // ✅ FIX 2 — iconFamily for timer icon corrected to 'material' (MCIcon needs 'material-community')
@@ -499,11 +518,7 @@ const ContactProfileScreen = ({ route, navigation }) => {
           </TouchableOpacity>
           <TouchableOpacity
             style={profileStyles.modalConfirmButton}
-            onPress={() => {
-              setShowVideoCallModal(false);
-              console.log('[ContactProfileScreen] Video call started');
-              // TODO: navigate to VideoCallScreen when ready
-            }}
+            onPress={handleStartVideoCall}
           >
             <Text style={profileStyles.modalConfirmText}>Call</Text>
           </TouchableOpacity>
