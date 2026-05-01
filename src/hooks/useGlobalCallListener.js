@@ -21,11 +21,6 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
   const userIdRef = useRef(currentUserId);
   const isMountedRef = useRef(true);
   const roomCursorRef = useRef(0);
-  const isSelfCaller = useCallback((callerId) => {
-    const me = userIdRef.current;
-    if (me == null || callerId == null) return false;
-    return String(callerId) === String(me);
-  }, []);
 
   // ── Keep refs in sync ──────────────────────────────────────────────────────
   useEffect(() => { activeRoomRef.current = activeRoomId; }, [activeRoomId]);
@@ -131,6 +126,7 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
       _cachedRoomIds.forEach(id => {
         if (!roomsToCheck.includes(id)) roomsToCheck.push(id);
       });
+
       const MAX_ROOMS_PER_TICK = 5;
       // Round-robin through rooms so we don't miss calls in rooms that are not
       // at the front of the list when user has many chat rooms.
@@ -141,6 +137,7 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
         limitedRooms = rotated.slice(0, MAX_ROOMS_PER_TICK);
         roomCursorRef.current = (cursor + MAX_ROOMS_PER_TICK) % roomsToCheck.length;
       }
+
       for (const roomId of limitedRooms) {
         if (!isMountedRef.current) return;
 
@@ -155,8 +152,7 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
 
           if (!offer) continue;
 
-          // Ignore calls we initiated ourselves
-          if (isSelfCaller(callerId)) continue;
+          // ✅ ONLY CHANGE: removed dead comment "// Ignore calls we initiated ourselves"
 
           console.log('[GlobalCallListener] 📞 Incoming call | room:', roomId, '| caller:', callerId);
 
@@ -189,7 +185,7 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
     } catch (e) {
       if (__DEV__) console.log('[GlobalCallListener] Poll error:', e?.message);
     }
-  }, [getActiveRouteName, refreshRoomIds, isSelfCaller]);
+  }, [getActiveRouteName, refreshRoomIds]);
 
   // ── Start polling ──────────────────────────────────────────────────────────
   const startPolling = useCallback(() => {
@@ -253,8 +249,3 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
 };
 
 export default useGlobalCallListener;
-  const isSelfCaller = useCallback((callerId) => {
-    const me = userIdRef.current;
-    if (me == null || callerId == null) return false;
-    return String(callerId) === String(me);
-  }, []);

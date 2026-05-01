@@ -1,5 +1,5 @@
  
-import { useCallback } from 'react';
+import React, { useCallback } from 'react';
 import { Alert } from 'react-native';
 import { handleApiError } from '../../../utils/errorHandler';
 import { getDisplayNameFromChatRoom } from '../../../utils/chatUtils';

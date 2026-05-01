@@ -3,7 +3,7 @@
 // ║ FILE: src/screens/chatSystem/Features/useMessages.js        ║
 // ╚══════════════════════════════════════════════════════════════╝
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Alert, Platform, ToastAndroid } from 'react-native';
 import chatService from '../../../services/chatService';
 import { handleApiError } from '../../../utils/errorHandler';

@@ -19,11 +19,7 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
   const userIdRef = useRef(currentUserId);
   const isMountedRef = useRef(true);
   const roomCursorRef = useRef(0);
-  const isSelfCaller = useCallback((callerId) => {
-    const me = userIdRef.current;
-    if (me == null || callerId == null) return false;
-    return String(callerId) === String(me);
-  }, []);
+  // ✅ CHANGE 1: isSelfCaller useCallback removed from here
 
   useEffect(() => { activeRoomRef.current = activeRoomId; }, [activeRoomId]);
   useEffect(() => { userIdRef.current = currentUserId; }, [currentUserId]);
@@ -138,7 +134,7 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
           const callerId = res?.data?.caller_id ?? res?.data?.callerId ?? res?.data?.user_id;
 
           if (!offer) continue;
-          if (isSelfCaller(callerId)) continue;
+          // ✅ CHANGE 2: if (isSelfCaller(callerId)) continue; — removed
 
           console.log('[GlobalVideoCallListener] Incoming video call | room:', roomId, '| caller:', callerId);
 
@@ -165,7 +161,7 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
     } catch (e) {
       if (__DEV__) console.log('[GlobalVideoCallListener] Poll error:', e?.message);
     }
-  }, [getActiveRouteName, navigationRef, refreshRoomIds, isSelfCaller]);
+  }, [getActiveRouteName, navigationRef, refreshRoomIds]); // ✅ CHANGE 3: isSelfCaller removed from deps
 
   const startPolling = useCallback(() => {
     stopPolling();
@@ -214,8 +210,3 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
 };
 
 export default useGlobalVideoCallListener;
-  const isSelfCaller = useCallback((callerId) => {
-    const me = userIdRef.current;
-    if (me == null || callerId == null) return false;
-    return String(callerId) === String(me);
-  }, []);
