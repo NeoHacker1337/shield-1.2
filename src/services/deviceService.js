@@ -1,7 +1,7 @@
 import DeviceInfo from 'react-native-device-info';
 import { Platform } from 'react-native';
 import axios from 'axios';
-import authService from './AuthService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../utils/config';
 
 class DeviceService {
@@ -19,7 +19,7 @@ class DeviceService {
     this.api.interceptors.request.use(
       async (config) => {
         try {
-          const token = await authService.getToken();
+          const token = await AsyncStorage.getItem('auth_token');
           if (token) config.headers.Authorization = `Bearer ${token}`;
         } catch {}
         return config;
@@ -32,7 +32,9 @@ class DeviceService {
       (response) => response,
       async (error) => {
         if (error.response?.status === 401) {
-          try { await authService.logout(); } catch {}
+          try {
+            await AsyncStorage.multiRemove(['auth_token', 'user_data']);
+          } catch {}
         }
         return Promise.reject(error);
       }

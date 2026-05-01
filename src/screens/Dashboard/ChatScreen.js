@@ -236,6 +236,8 @@ const ChatScreen = ({ route, navigation }) => {
   const [currentUser, setCurrentUser] = useState(initialCurrentUser);
   const displayName = getDisplayNameFromChatRoom(chatRoom, currentUser);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const flatListRef = useRef(null);
   const inputRef = useRef(null);
@@ -244,8 +246,7 @@ const ChatScreen = ({ route, navigation }) => {
 
 
   const { setActiveRoom, clearActiveRoom } = useActiveRoom();
-  // ✅ FIX 1: Destructure keyboardHeight too
-  const { isKeyboardVisible, keyboardHeight } = useKeyboard();
+  const { isKeyboardVisible } = useKeyboard();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -313,8 +314,6 @@ const ChatScreen = ({ route, navigation }) => {
     handleMessageLongPress,
     handleAudioCall,
     handleVideoCall,
-    handleSearch,
-    handleMedia,
     handleViewContact,
     handleMute,
     handleReport,
@@ -395,7 +394,7 @@ const ChatScreen = ({ route, navigation }) => {
 
     pollingIntervalRef.current = setInterval(() => {
       checkForNewMessages();
-    }, 3000);
+    }, 5000);
 
     return () => {
       if (pollingIntervalRef.current) {
@@ -631,6 +630,32 @@ const ChatScreen = ({ route, navigation }) => {
     [messages]
   );
 
+  const filteredMessages = React.useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return reversedMessages;
+    return reversedMessages.filter((m) => {
+      const text = String(
+        m?.content ?? m?.message ?? m?.text ?? m?.body ?? ''
+      ).toLowerCase();
+      return text.includes(q);
+    });
+  }, [reversedMessages, searchQuery]);
+
+  const handleSearchPress = useCallback(() => {
+    setShowOptionsMenu(false);
+    setSearchMode(true);
+    setSearchQuery('');
+  }, []);
+
+  const handleMediaPress = useCallback(() => {
+    setShowOptionsMenu(false);
+    navigation.navigate('MediaLinksDocs', {
+      messages,
+      title: 'Media, Links & Docs',
+      initialTab: 'media',
+    });
+  }, [navigation, messages]);
+
   const renderMessageItem = useCallback(
     ({ item, index }) => {
       if (!item || !item.id) return null;
@@ -691,9 +716,12 @@ const ChatScreen = ({ route, navigation }) => {
   const avatarChar = getContactAvatar(displayName);
   const avatarColor = getAvatarColor(displayName);
   const isOnline = getOnlineStatus();
+  const keyboardLift = 0; // safety fallback for stale bundles/dev cache
 
-  // ✅ FIX 2: Compute bottom padding — only apply safe area when keyboard is HIDDEN
-  const bottomPadding = isKeyboardVisible ? 0 : insets.bottom;
+  // Keep gesture-nav safe-area even while keyboard is open (Android gesture mode).
+  // On some devices (e.g. OnePlus gesture navigation), removing bottom inset while
+  // keyboard is visible causes the composer/send area touch targets to overlap.
+  const bottomPadding = Math.max(insets.bottom, 6);
 
   const renderEmojiPicker = () => {
     if (!showEmojiPicker) return null;
@@ -955,7 +983,7 @@ const ChatScreen = ({ route, navigation }) => {
       {/* ✅ FIX 5: Platform-specific KAV behavior + correct offset */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
       >
         <View style={{ flex: 1, backgroundColor: '#ECE5DD' }}>
@@ -968,40 +996,61 @@ const ChatScreen = ({ route, navigation }) => {
               <Icon name="arrow-back" size={24} color="#FFFFFF" />
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.headerContent}
-              activeOpacity={0.7}
-              onPress={() => {
-                navigation.navigate('ContactProfile', {
-                  name: displayName,
-                  avatar: avatarChar,
-                  isOnline: isOnline,
-
-                  chatRoom,
-                  currentUser,
-                });
-              }}
-            >
-              <View style={styles.headerAvatarContainer}>
-                <View
-                  style={[
-                    styles.headerAvatar,
-                    isOnline && styles.onlineAvatar,
-                    { backgroundColor: avatarColor },
-                  ]}
-                >
-                  <Text style={styles.headerAvatarText}>{avatarChar}</Text>
+            {searchMode ? (
+              <View style={[styles.headerContent, { paddingRight: 8 }]}>
+                <Icon name="search" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <TextInput
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Search messages..."
+                  placeholderTextColor="rgba(255,255,255,0.7)"
+                  style={{ flex: 1, color: '#fff', fontSize: 16, paddingVertical: 6 }}
+                  autoFocus
+                  returnKeyType="search"
+                  blurOnSubmit={false}
+                  onSubmitEditing={(e) => {
+                    e?.preventDefault?.();
+                  }}
+                />
+                <TouchableOpacity onPress={() => { setSearchMode(false); setSearchQuery(''); }}>
+                  <Icon name="close" size={22} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.headerContent}
+                activeOpacity={0.7}
+                onPress={() => {
+                  navigation.navigate('ContactProfile', {
+                    name: displayName,
+                    avatar: avatarChar,
+                    isOnline: isOnline,
+                    chatRoom,
+                    currentUser,
+                  });
+                }}
+              >
+                <View style={styles.headerAvatarContainer}>
+                  <View
+                    style={[
+                      styles.headerAvatar,
+                      isOnline && styles.onlineAvatar,
+                      { backgroundColor: avatarColor },
+                    ]}
+                  >
+                    <Text style={styles.headerAvatarText}>{avatarChar}</Text>
+                  </View>
+                  {isOnline && <View style={styles.headerOnlineIndicator} />}
                 </View>
-                {isOnline && <View style={styles.headerOnlineIndicator} />}
-              </View>
 
-              <View style={styles.headerTextContainer}>
-                <Text style={styles.headerTitle}>{displayName}</Text>
-                <Text style={styles.headerSubtitle}>
-                  {isOnline ? 'Online' : 'Last seen recently'}
-                </Text>
-              </View>
-            </TouchableOpacity>
+                <View style={styles.headerTextContainer}>
+                  <Text style={styles.headerTitle}>{displayName}</Text>
+                  <Text style={styles.headerSubtitle}>
+                    {isOnline ? 'Online' : 'Last seen recently'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
 
             <View style={styles.headerActions}>
               <TouchableOpacity
@@ -1037,7 +1086,7 @@ const ChatScreen = ({ route, navigation }) => {
             ) : (
               <FlatList
                 ref={flatListRef}
-                data={reversedMessages}
+                data={filteredMessages}
                 renderItem={renderMessageItem}
                 keyExtractor={(item, index) =>
                   item.id ? item.id.toString() : `temp-${index}`
@@ -1085,6 +1134,7 @@ const ChatScreen = ({ route, navigation }) => {
               styles.bottomInputWrapper,
               {
                 paddingBottom: bottomPadding,
+                marginBottom: keyboardLift,
                 backgroundColor: '#ECE5DD',
               },
             ]}
@@ -1134,7 +1184,7 @@ const ChatScreen = ({ route, navigation }) => {
 
             <TouchableOpacity
               style={styles.optionsMenuItem}
-              onPress={() => handleOptionPress(handleSearch)}
+              onPress={handleSearchPress}
             >
               <Icon
                 name="search"
@@ -1147,7 +1197,7 @@ const ChatScreen = ({ route, navigation }) => {
 
             <TouchableOpacity
               style={styles.optionsMenuItem}
-              onPress={() => handleOptionPress(handleMedia)}
+              onPress={handleMediaPress}
             >
               <Icon
                 name="perm-media"

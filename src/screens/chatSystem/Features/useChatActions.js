@@ -169,6 +169,8 @@ const useChatActions = ({
       }
 
       const callerName = getDisplayNameFromChatRoom(chatRoom, currentUser);
+      global.activeCallType = 'audio';
+      global.isCallActive = true;
 
       // Pass the full call context expected by AudioCallScreen.
       navigation?.navigate?.('AudioCall', {
@@ -194,6 +196,8 @@ const useChatActions = ({
       return;
     }
 
+    global.activeCallType = 'video';
+    global.isCallActive = true;
     navigation?.navigate?.('VideoCallScreen', {
       roomId: chatRoom.id,
       userId: currentUser.id,
@@ -213,8 +217,22 @@ const useChatActions = ({
   }, []);
 
   const handleViewContact = useCallback(() => {
-    Alert.alert('Contact', 'Contact viewer is coming soon.');
-  }, []);
+    if (!chatRoom) {
+      Alert.alert('Contact', 'Contact details are not available.');
+      return;
+    }
+
+    const displayName = getDisplayNameFromChatRoom(chatRoom, currentUser);
+    const avatar = (displayName?.charAt?.(0) || '?').toUpperCase();
+
+    navigation?.navigate?.('ContactProfile', {
+      name: displayName,
+      avatar,
+      isOnline: false,
+      chatRoom,
+      currentUser,
+    });
+  }, [chatRoom, currentUser, navigation]);
 
   const handleNewGroup = useCallback(() => {
     Alert.alert('New Group', 'Group creation is coming soon.');

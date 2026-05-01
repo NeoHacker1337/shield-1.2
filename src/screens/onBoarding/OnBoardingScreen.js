@@ -20,6 +20,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import styles from '../../assets/OnBoardingStyles';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
+const ONBOARDING_PERMS_DONE_KEY = 'shield_onboarding_permissions_done';
 
 const OnBoardingScreen = ({ navigation }) => {
   const [isAppLoading, setIsAppLoading] = useState(true);
@@ -95,11 +96,29 @@ const OnBoardingScreen = ({ navigation }) => {
       description: 'Required for emergency dialer functionality',
       required: true,
     },
+    {
+      permission: PERMISSIONS.ANDROID.CAMERA,
+      name: 'Camera Access',
+      description: 'Required for QR scanning and camera features',
+      required: true,
+    },
+    {
+      permission: PERMISSIONS.ANDROID.RECORD_AUDIO,
+      name: 'Microphone Access',
+      description: 'Required for secure audio call features',
+      required: true,
+    },
   ];
 
   if (Platform.Version >= 33) {
     // Android 13+: granular media permissions
     list.push(
+      {
+        permission: PERMISSIONS.ANDROID.POST_NOTIFICATIONS,
+        name: 'Notifications',
+        description: 'Required to receive message and call alerts',
+        required: true,
+      },
       {
         permission: PERMISSIONS.ANDROID.READ_MEDIA_IMAGES,
         name: 'Media Images',
@@ -186,6 +205,14 @@ const OnBoardingScreen = ({ navigation }) => {
 
   const requestAllPermissions = async () => {
     try {
+      const alreadyHandled = await AsyncStorage.getItem(ONBOARDING_PERMS_DONE_KEY);
+      if (alreadyHandled === 'true') {
+        if (!mounted) return;
+        setIsAppLoading(false);
+        setShowWelcomeScreen(true);
+        return;
+      }
+
       setIsRequestingPermissions(true);
 
       const statusMap = {};
@@ -195,7 +222,7 @@ const OnBoardingScreen = ({ navigation }) => {
 
         let status = await check(perm.permission);
 
-        if (status === RESULTS.DENIED) {
+        if (status === RESULTS.DENIED || status === RESULTS.LIMITED) {
           status = await request(perm.permission);
         }
 
@@ -208,18 +235,23 @@ const OnBoardingScreen = ({ navigation }) => {
 
       // Optional: warn if any required permission is blocked
       const blockedRequired = permissionsToRequest.filter(
-        p => p.required && statusMap[p.permission] === RESULTS.BLOCKED,
+        p => p.required && (
+          statusMap[p.permission] === RESULTS.BLOCKED ||
+          statusMap[p.permission] === RESULTS.DENIED
+        ),
       );
       if (blockedRequired.length > 0) {
         Alert.alert(
           'Permissions Required',
-          'Some required permissions are permanently denied. Please enable them from Settings for full protection.',
+          `Please allow required permissions (${blockedRequired.map(p => p.name).join(', ')}) from Settings for full app functionality.`,
           [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Open Settings', onPress: () => openSettings() },
           ],
         );
       }
+
+      await AsyncStorage.setItem(ONBOARDING_PERMS_DONE_KEY, 'true');
     } catch (e) {
       console.error('OnBoarding permission error', e);
     } finally {

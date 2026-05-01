@@ -266,7 +266,7 @@ const AboutUsScreen = () => {
             <View style={styles.copyrightContainer}>
               <Icon name="copyright" size={14} color="#9CA3AF" />
               <Text style={styles.copyrightText}>
-                2025 Shield Security. All rights reserved.
+                {new Date().getFullYear()} Shield Security. All rights reserved.
               </Text>
             </View>
           </Animated.View>

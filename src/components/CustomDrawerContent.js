@@ -25,8 +25,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  */
 const DRAWER_ITEMS = [
   { label: 'Profile', icon: 'person', screen: 'Profile' },
-  { label: 'Referral', icon: 'qr-code', screen: 'ReferralQrScreen' },
-  { label: 'Share Profile', icon: 'share', screen: 'ShareProfileScreen' },
+  { label: 'Referral', icon: 'qr-code', screen: 'ReferralQr' },
+  { label: 'Share Profile', icon: 'share', screen: 'ShareProfile' },
   { label: 'Settings', icon: 'settings', screen: 'Settings' },
   { label: 'Feedback', icon: 'feedback', screen: 'Feedback' },
   { label: 'About Us', icon: 'info', screen: 'AboutUs' },
@@ -76,7 +76,7 @@ const CustomDrawerContent = ({ navigation, onClose }) => {
     if (onClose) onClose();
 
     // ✅ Special handling for Referral
-    if (screen === 'ReferralQrScreen') {
+    if (screen === 'ReferralQr') {
       try {
         const localData = await AsyncStorage.getItem('referral_data');
         let referralLink = '';
@@ -90,7 +90,7 @@ const CustomDrawerContent = ({ navigation, onClose }) => {
             '';
         }
 
-        navigation.navigate('ReferralQrScreen', {
+        navigation.navigate('ReferralQr', {
           referralLink,
         });
 

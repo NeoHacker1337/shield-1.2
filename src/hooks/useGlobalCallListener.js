@@ -4,7 +4,7 @@ import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import chatService from '../services/chatService';
 
-const POLL_INTERVAL = 3000;
+const POLL_INTERVAL = 1500;
 
 // ─── Module-level room cache ─────────────────────────────────────────────────
 // Shared across all hook instances so rooms discovered in ChatScreen
@@ -20,6 +20,12 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
   const activeRoomRef = useRef(activeRoomId);
   const userIdRef = useRef(currentUserId);
   const isMountedRef = useRef(true);
+  const roomCursorRef = useRef(0);
+  const isSelfCaller = useCallback((callerId) => {
+    const me = userIdRef.current;
+    if (me == null || callerId == null) return false;
+    return String(callerId) === String(me);
+  }, []);
 
   // ── Keep refs in sync ──────────────────────────────────────────────────────
   useEffect(() => { activeRoomRef.current = activeRoomId; }, [activeRoomId]);
@@ -98,6 +104,7 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
       }
 
       if (isNavigating.current) return;
+      if (global.isCallActive && global.activeCallType === 'video') return;
 
       const userId = userIdRef.current;
       if (!userId) return;
@@ -124,7 +131,17 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
       _cachedRoomIds.forEach(id => {
         if (!roomsToCheck.includes(id)) roomsToCheck.push(id);
       });
-      for (const roomId of roomsToCheck) {
+      const MAX_ROOMS_PER_TICK = 5;
+      // Round-robin through rooms so we don't miss calls in rooms that are not
+      // at the front of the list when user has many chat rooms.
+      let limitedRooms = roomsToCheck;
+      if (roomsToCheck.length > MAX_ROOMS_PER_TICK) {
+        const cursor = roomCursorRef.current % roomsToCheck.length;
+        const rotated = [...roomsToCheck.slice(cursor), ...roomsToCheck.slice(0, cursor)];
+        limitedRooms = rotated.slice(0, MAX_ROOMS_PER_TICK);
+        roomCursorRef.current = (cursor + MAX_ROOMS_PER_TICK) % roomsToCheck.length;
+      }
+      for (const roomId of limitedRooms) {
         if (!isMountedRef.current) return;
 
         try {
@@ -134,16 +151,17 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
 
           const res = await chatService.getCallOffer(roomId);
           const offer = res?.data?.offer;
-          const callerId = res?.data?.caller_id;
+          const callerId = res?.data?.caller_id ?? res?.data?.callerId ?? res?.data?.user_id;
 
           if (!offer) continue;
 
           // Ignore calls we initiated ourselves
-          if (String(callerId) === String(userId)) continue;
+          if (isSelfCaller(callerId)) continue;
 
           console.log('[GlobalCallListener] 📞 Incoming call | room:', roomId, '| caller:', callerId);
 
           isNavigating.current = true;
+          global.activeCallType = 'audio';
 
           nav.navigate('IncomingCall', {
             roomId,
@@ -171,7 +189,7 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
     } catch (e) {
       if (__DEV__) console.log('[GlobalCallListener] Poll error:', e?.message);
     }
-  }, [getActiveRouteName, refreshRoomIds]);
+  }, [getActiveRouteName, refreshRoomIds, isSelfCaller]);
 
   // ── Start polling ──────────────────────────────────────────────────────────
   const startPolling = useCallback(() => {
@@ -235,3 +253,8 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
 };
 
 export default useGlobalCallListener;
+  const isSelfCaller = useCallback((callerId) => {
+    const me = userIdRef.current;
+    if (me == null || callerId == null) return false;
+    return String(callerId) === String(me);
+  }, []);

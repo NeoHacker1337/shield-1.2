@@ -51,6 +51,8 @@ const IncomingVideoCallScreen = ({ route, navigation }) => {
         try {
             await AsyncStorage.setItem('call_just_ended', 'true');
         } catch (e) {}
+        global.activeCallType = 'video';
+        global.isCallActive = true;
 
         navigation.replace('VideoCallScreen', {
             roomId,
@@ -71,6 +73,8 @@ const IncomingVideoCallScreen = ({ route, navigation }) => {
         try {
             await chatService.endVideoCall(roomId);
             await AsyncStorage.setItem('call_just_ended', 'true');
+            global.activeCallType = null;
+            global.isCallActive = false;
         } catch (e) {
             console.log('[IncomingVideoCallScreen] decline error:', e?.message);
         }

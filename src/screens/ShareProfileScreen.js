@@ -44,7 +44,7 @@ const QR_SIZE_RATIO = 0.65;
 const AVATAR_SIZE = 72;
 
 /* ── Component ── */
-const ShareProfileScreen = () => {
+const ShareProfileScreen = ({ navigation }) => {
   const [qrValue, setQrValue] = useState('');
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
@@ -151,6 +151,11 @@ const ShareProfileScreen = () => {
       console.error('Share error:', e.message);
     }
   }, [userName, userEmail]);
+
+  const handleBack = useCallback(() => {
+    if (navigation?.canGoBack?.()) navigation.goBack();
+    else navigation?.navigate?.('MainTabs');
+  }, [navigation]);
 
   /* ── Memoized QR grid ── */
   const renderedQR = useMemo(() => {
@@ -259,6 +264,14 @@ const ShareProfileScreen = () => {
 
         {/* ── Header ── */}
         <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={handleBack}
+            activeOpacity={0.8}
+            accessibilityLabel="Go back"
+          >
+            <Icon name="arrow-left" size={22} color={COLORS.primary} />
+          </TouchableOpacity>
           <View style={styles.headerIconWrap}>
             <Icon name="qrcode-scan" size={22} color={COLORS.primary} />
           </View>
@@ -463,6 +476,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
     zIndex: 1,
+    position: 'relative',
+  },
+  backButton: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerIconWrap: {
     width: 48,

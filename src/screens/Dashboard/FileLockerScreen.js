@@ -15,6 +15,7 @@ import axios from 'axios';
 
 // ─── Styles & Theme ───────────────────────────────────────
 import styles from '../../assets/FileLockerStyles';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ─── Services ─────────────────────────────────────────────
 import fileManager from '../../services/fileManager';
@@ -65,6 +66,7 @@ const DRAWER_ANIMATION_DURATION = 280;
 //  MAIN COMPONENT
 // ─────────────────────────────────────────────────────────
 const FileLockerScreen = ({ navigation }) => {
+  const insets = useSafeAreaInsets();
 
   // ─── Dimension-aware drawer width ─────────────────────
   const [screenWidth, setScreenWidth] = useState(() => Dimensions.get('window').width);
@@ -1506,7 +1508,10 @@ const FileLockerScreen = ({ navigation }) => {
       )}
 
       {/* Menu Button */}
-      <TouchableOpacity onPress={openDrawer} style={styles.menuButton}>
+      <TouchableOpacity
+        onPress={openDrawer}
+        style={[styles.menuButton, { top: Math.max(insets.top + 8, 16) }]}
+      >
         <Icon name="menu" size={24} color="#fff" />
       </TouchableOpacity>
 

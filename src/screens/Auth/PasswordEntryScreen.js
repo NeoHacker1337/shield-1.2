@@ -108,6 +108,8 @@ const PasswordEntryScreen = ({ navigation }) => {
   };
 
   const handleLogin = useCallback(async () => {
+    if (isLoading) return;
+
     setIsLoading(true);
     setError('');
     Keyboard.dismiss();
@@ -173,7 +175,9 @@ const PasswordEntryScreen = ({ navigation }) => {
           if (id) deviceId = id;
         } catch { }
 
-        const { user, token } = await AuthService.login(email, password, deviceId);
+        const cleanEmail = email.trim();
+        const cleanPassword = password.trim();
+        const { user, token } = await AuthService.login(cleanEmail, cleanPassword, deviceId);
 
         if (!user || !token) {
           throw new Error('Login failed. Invalid response from server.');
@@ -185,13 +189,13 @@ const PasswordEntryScreen = ({ navigation }) => {
       setPassword('');
       const errorMessage = hasPasscode
         ? apiError?.message || 'Authentication failed. Please try again.'
-        : handleApiError(apiError);
+        : handleApiError(apiError, 'Invalid email or password.');
       setError(errorMessage);
       shakeAnimation();
     } finally {
       setIsLoading(false);
     }
-  }, [email, password, navigation, shakeAnimation, hasPasscode]);
+  }, [email, password, navigation, shakeAnimation, hasPasscode, wrongAttempts, isLoading]);
 
   const handleForgotPassword = () => {
     navigation.navigate('PasswordRecovery');

@@ -89,6 +89,8 @@ const AudioCallScreen = ({ route, navigation }) => {
     const callStartTime = useRef(Date.now());
     const connectedAtRef = useRef(null);
     const disconnectTimeoutRef = useRef(null);
+    const isRingtonePlayingRef = useRef(false);
+    const callerRetryTimeoutRef = useRef(null);
 
     const displayName = callerName || (isCaller ? 'Outgoing Call' : 'Incoming Call');
     const avatarInitial = String(displayName || 'C').trim().charAt(0).toUpperCase() || 'C';
@@ -103,6 +105,10 @@ const AudioCallScreen = ({ route, navigation }) => {
     const markConnected = () => {
         if (!connectedAtRef.current) connectedAtRef.current = Date.now();
         setIsConnected(true);
+        if (isRingtonePlayingRef.current) {
+            InCallManager.stopRingtone();
+            isRingtonePlayingRef.current = false;
+        }
         if (!isOnHold) setStatus('Connected');
     };
 
@@ -118,6 +124,10 @@ const AudioCallScreen = ({ route, navigation }) => {
             if (durationIntervalRef.current) {
                 clearInterval(durationIntervalRef.current);
                 durationIntervalRef.current = null;
+            }
+            if (callerRetryTimeoutRef.current) {
+                clearTimeout(callerRetryTimeoutRef.current);
+                callerRetryTimeoutRef.current = null;
             }
         };
     }, [isConnected]);
@@ -329,7 +339,7 @@ const AudioCallScreen = ({ route, navigation }) => {
                 }
                 console.log('[AudioCallScreen] Poll error:', e?.message);
             }
-        }, 3000);
+        }, 1500);
 
         const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
             handleEndCall();
@@ -355,6 +365,8 @@ const AudioCallScreen = ({ route, navigation }) => {
             }
 
             backHandler.remove();
+            InCallManager.stopRingtone();
+            isRingtonePlayingRef.current = false;
             InCallManager.stop();
 
             if (!hasEndedCall.current) {
@@ -367,7 +379,7 @@ const AudioCallScreen = ({ route, navigation }) => {
     }, [isCaller, roomId]);
 
     // 🔑 FIXED: use startCaller for caller, init only for receiver
-    const startCall = async () => {
+    const startCall = async (attempt = 0) => {
         try {
             // ✅ request permissions first
             if (Platform.OS === 'android') {
@@ -389,12 +401,15 @@ const AudioCallScreen = ({ route, navigation }) => {
 
             // ✅ pause message polling during call
             global.isCallActive = true;
+            global.activeCallType = 'audio';
 
             InCallManager.start({ media: 'audio' });
             InCallManager.setKeepScreenOn(true);
             InCallManager.setForceSpeakerphoneOn(true);
 
             if (isCaller) {
+                InCallManager.startRingtone('_BUNDLE_');
+                isRingtonePlayingRef.current = true;
                 await webrtcService.startCaller(roomId, userId);
                 setStatus('Calling...');
             } else {
@@ -403,6 +418,17 @@ const AudioCallScreen = ({ route, navigation }) => {
             }
         } catch (e) {
             console.log('[AudioCallScreen] startCall error:', e?.message);
+            if (isCaller && e?.response?.status === 429 && attempt < 2) {
+                const retryInMs = 1200 * (attempt + 1);
+                setStatus(`Server busy, retrying (${attempt + 1}/2)...`);
+                callerRetryTimeoutRef.current = setTimeout(() => {
+                    callerRetryTimeoutRef.current = null;
+                    if (!hasEndedCall.current) startCall(attempt + 1);
+                }, retryInMs);
+                return;
+            }
+            InCallManager.stopRingtone();
+            isRingtonePlayingRef.current = false;
             setStatus('Connection Failed');
         }
     };
@@ -425,9 +451,16 @@ const AudioCallScreen = ({ route, navigation }) => {
             clearInterval(durationIntervalRef.current);
             durationIntervalRef.current = null;
         }
+        if (callerRetryTimeoutRef.current) {
+            clearTimeout(callerRetryTimeoutRef.current);
+            callerRetryTimeoutRef.current = null;
+        }
 
+        InCallManager.stopRingtone();
+        isRingtonePlayingRef.current = false;
         InCallManager.stop();
         global.isCallActive = false;
+        global.activeCallType = null;
         webrtcService.close();
         chatService.endCall(roomId);
 
@@ -458,9 +491,16 @@ const AudioCallScreen = ({ route, navigation }) => {
             clearInterval(durationIntervalRef.current);
             durationIntervalRef.current = null;
         }
+        if (callerRetryTimeoutRef.current) {
+            clearTimeout(callerRetryTimeoutRef.current);
+            callerRetryTimeoutRef.current = null;
+        }
 
+        InCallManager.stopRingtone();
+        isRingtonePlayingRef.current = false;
         InCallManager.stop();
         global.isCallActive = false;
+        global.activeCallType = null;
         webrtcService.close();
 
         await AsyncStorage.setItem('call_just_ended', 'true');

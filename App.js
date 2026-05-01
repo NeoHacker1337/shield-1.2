@@ -40,6 +40,7 @@ import AllInvitationsScreen from './src/screens/Dashboard/AllInvitationsScreen';
 import ScanScreen from './src/screens/Dashboard/ScanScreen';
 import ReferralQrScreen from './src/screens/ReferralQrScreen';
 import ShareProfileScreen from './src/screens/ShareProfileScreen';
+import MediaLinksDocsScreen from './src/screens/MediaLinksDocsScreen';
 import ContactProfileScreen from './src/screens/ContactProfileScreen';
 
 /* Call Screens */
@@ -205,6 +206,7 @@ const AppNavigator = ({
         <Stack.Screen name="Scan" component={ScanScreen} />
         <Stack.Screen name="ReferralQr" component={ReferralQrScreen} />
         <Stack.Screen name="ShareProfile" component={ShareProfileScreen} />
+        <Stack.Screen name="MediaLinksDocs" component={MediaLinksDocsScreen} />
         <Stack.Screen name="ContactProfile" component={ContactProfileScreen} />
 
         {/* Call Screens */}

@@ -4,7 +4,9 @@ import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import chatService from '../services/chatService';
 
-const POLL_INTERVAL = 3000;
+// Faster polling keeps incoming video-call screen responsive on devices
+// where network + room iteration previously caused noticeable delays.
+const POLL_INTERVAL = 1500;
 const ROOM_REFRESH_INTERVAL = 15000;
 
 let cachedRoomIds = new Set();
@@ -16,6 +18,12 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
   const activeRoomRef = useRef(activeRoomId);
   const userIdRef = useRef(currentUserId);
   const isMountedRef = useRef(true);
+  const roomCursorRef = useRef(0);
+  const isSelfCaller = useCallback((callerId) => {
+    const me = userIdRef.current;
+    if (me == null || callerId == null) return false;
+    return String(callerId) === String(me);
+  }, []);
 
   useEffect(() => { activeRoomRef.current = activeRoomId; }, [activeRoomId]);
   useEffect(() => { userIdRef.current = currentUserId; }, [currentUserId]);
@@ -74,6 +82,7 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
   const pollTick = useCallback(async () => {
     try {
       if (!isMountedRef.current || isNavigating.current || global.isCallActive) return;
+      if (global.isCallActive && global.activeCallType === 'audio') return;
 
       const justEnded = await AsyncStorage.getItem('call_just_ended');
       if (justEnded === 'true') {
@@ -106,8 +115,17 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
       cachedRoomIds.forEach(id => {
         if (!roomsToCheck.includes(id)) roomsToCheck.push(id);
       });
+      const MAX_ROOMS_PER_TICK = 5;
+      // Round-robin window prevents starving rooms at the end of the list.
+      let limitedRooms = roomsToCheck;
+      if (roomsToCheck.length > MAX_ROOMS_PER_TICK) {
+        const cursor = roomCursorRef.current % roomsToCheck.length;
+        const rotated = [...roomsToCheck.slice(cursor), ...roomsToCheck.slice(0, cursor)];
+        limitedRooms = rotated.slice(0, MAX_ROOMS_PER_TICK);
+        roomCursorRef.current = (cursor + MAX_ROOMS_PER_TICK) % roomsToCheck.length;
+      }
 
-      for (const roomId of roomsToCheck) {
+      for (const roomId of limitedRooms) {
         if (!isMountedRef.current) return;
 
         try {
@@ -117,14 +135,15 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
 
           const res = await chatService.getVideoCallOffer(roomId);
           const offer = res?.data?.offer;
-          const callerId = res?.data?.caller_id;
+          const callerId = res?.data?.caller_id ?? res?.data?.callerId ?? res?.data?.user_id;
 
           if (!offer) continue;
-          if (String(callerId) === String(userId)) continue;
+          if (isSelfCaller(callerId)) continue;
 
           console.log('[GlobalVideoCallListener] Incoming video call | room:', roomId, '| caller:', callerId);
 
           isNavigating.current = true;
+          global.activeCallType = 'video';
           nav.navigate('IncomingVideoCallScreen', {
             roomId,
             callerId,
@@ -146,7 +165,7 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
     } catch (e) {
       if (__DEV__) console.log('[GlobalVideoCallListener] Poll error:', e?.message);
     }
-  }, [getActiveRouteName, navigationRef, refreshRoomIds]);
+  }, [getActiveRouteName, navigationRef, refreshRoomIds, isSelfCaller]);
 
   const startPolling = useCallback(() => {
     stopPolling();
@@ -195,3 +214,8 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
 };
 
 export default useGlobalVideoCallListener;
+  const isSelfCaller = useCallback((callerId) => {
+    const me = userIdRef.current;
+    if (me == null || callerId == null) return false;
+    return String(callerId) === String(me);
+  }, []);

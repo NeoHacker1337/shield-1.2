@@ -44,6 +44,8 @@ const IncomingCallScreen = ({ route, navigation }) => {
     try {
       await AsyncStorage.setItem('call_just_ended', 'true'); // ✅ prevent listener conflict
     } catch (e) {}
+    global.activeCallType = 'audio';
+    global.isCallActive = true;
 
     navigation.replace('AudioCall', {
       userId: callerId,
@@ -67,8 +69,13 @@ const IncomingCallScreen = ({ route, navigation }) => {
       await chatService.endCall(roomId); // ✅ API call
 
       await AsyncStorage.setItem('call_just_ended', 'true'); // ✅ CRITICAL FIX
+      global.activeCallType = null;
+      global.isCallActive = false;
     } catch (e) {
       console.log('Error ending call:', e?.message);
+    } finally {
+      global.activeCallType = null;
+      global.isCallActive = false;
     }
 
     // ✅ Safe navigation fallback

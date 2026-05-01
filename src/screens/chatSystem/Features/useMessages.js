@@ -4,9 +4,11 @@
 // ╚══════════════════════════════════════════════════════════════╝
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { Alert, Platform, ToastAndroid } from 'react-native';
 import chatService from '../../../services/chatService';
 import { handleApiError } from '../../../utils/errorHandler';
 import { startCallListener, stopCallListener } from '../../../services/callListener';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // 🚨 GLOBAL FLAG — disables old listener safely
 const ENABLE_OLD_CALL_LISTENER = false;
@@ -73,6 +75,27 @@ const deduplicateMessages = (msgs) => {
 };
 
 const SCROLL_BOTTOM_THRESHOLD = 50;
+const MAX_POLL_BACKOFF_MS = 15000;
+const getRoomCacheKey = (roomId) => `chat_room_messages_${roomId}`;
+const ROOM_META_KEY = 'shield_chat_room_meta';
+
+const parseRetryAfterMs = (rawHeader) => {
+  if (rawHeader == null) return 0;
+
+  // Retry-After can be seconds ("10") or HTTP date.
+  const asNumber = Number(rawHeader);
+  if (Number.isFinite(asNumber) && asNumber > 0) {
+    return asNumber * 1000;
+  }
+
+  const asDate = new Date(rawHeader).getTime();
+  if (Number.isFinite(asDate)) {
+    const diff = asDate - Date.now();
+    return diff > 0 ? diff : 0;
+  }
+
+  return 0;
+};
 
 // ─────────────────────────────────────────────────────────────────
 // HOOK
@@ -94,6 +117,20 @@ const useMessages = ({ chatRoom, currentUser, navigation }) => {
   const mountedRef = useRef(true);
   const isAtBottomRef = useRef(true);
   const currentPageRef = useRef(1);
+  const pollBackoffUntilRef = useRef(0);
+  const poll429CountRef = useRef(0);
+  const lastNotifiedMessageIdRef = useRef(null);
+
+  const shouldNotifyForRoom = useCallback(async () => {
+    try {
+      const raw = await AsyncStorage.getItem(ROOM_META_KEY);
+      const meta = raw ? JSON.parse(raw) : {};
+      const roomMeta = meta?.[String(chatRoom?.id)] || meta?.[chatRoom?.id] || {};
+      return roomMeta?.muted !== true;
+    } catch {
+      return true;
+    }
+  }, [chatRoom?.id]);
 
   // ─────────────────────────────────────────────────────────────
   // MOUNT / UNMOUNT
@@ -183,10 +220,13 @@ const useMessages = ({ chatRoom, currentUser, navigation }) => {
         if (isLoadingMore && page > 1) {
           setMessages((prev) => {
             const combined = [...sortedMessages, ...prev];
-            return deduplicateMessages(combined);
+            const next = deduplicateMessages(combined);
+            AsyncStorage.setItem(getRoomCacheKey(chatRoom.id), JSON.stringify(next)).catch(() => {});
+            return next;
           });
         } else {
           setMessages(sortedMessages);
+          AsyncStorage.setItem(getRoomCacheKey(chatRoom.id), JSON.stringify(sortedMessages)).catch(() => {});
           if (sortedMessages.length > 0) {
             lastMessageIdRef.current =
               sortedMessages[sortedMessages.length - 1].id;
@@ -202,6 +242,21 @@ const useMessages = ({ chatRoom, currentUser, navigation }) => {
         }
       } catch (error) {
         if (!mountedRef.current) return;
+        if (error?.response?.status === 429) {
+          poll429CountRef.current += 1;
+          const retryAfterMs = parseRetryAfterMs(error?.response?.headers?.['retry-after']);
+          const exponentialMs = Math.min(MAX_POLL_BACKOFF_MS, 2000 * (2 ** (poll429CountRef.current - 1)));
+          const backoffMs = Math.min(MAX_POLL_BACKOFF_MS, Math.max(retryAfterMs, exponentialMs));
+          pollBackoffUntilRef.current = Date.now() + backoffMs;
+          // Keep current messages on screen; don't surface as hard error.
+          if (__DEV__) {
+            console.log(
+              `[useMessages] initial/load-more rate-limited (429) — backing off ${Math.ceil(backoffMs / 1000)}s`
+            );
+          }
+          return;
+        }
+
         handleApiError(error, 'Failed to load messages');
         if (!isLoadingMore) setMessages([]);
       } finally {
@@ -218,6 +273,10 @@ const useMessages = ({ chatRoom, currentUser, navigation }) => {
   const checkForNewMessages = useCallback(async () => {
     if (!chatRoom?.id || isLoadingRef.current) return;
     if (!mountedRef.current) return;
+    if (global.isCallActive) return;
+
+    const now = Date.now();
+    if (now < pollBackoffUntilRef.current) return;
 
     isLoadingRef.current = true;
 
@@ -247,16 +306,52 @@ const useMessages = ({ chatRoom, currentUser, navigation }) => {
           setShowNewMessageBadge(true);
         }
 
-        return [...prevMessages, ...uniqueNew];
+        const next = [...prevMessages, ...uniqueNew];
+        AsyncStorage.setItem(getRoomCacheKey(chatRoom.id), JSON.stringify(next)).catch(() => {});
+        return next;
       });
 
       lastMessageIdRef.current = latestMessage.id;
+      poll429CountRef.current = 0;
+      pollBackoffUntilRef.current = 0;
+
+      if (
+        latestMessage?.id &&
+        latestMessage.id !== lastNotifiedMessageIdRef.current &&
+        !isAtBottomRef.current
+      ) {
+        const canNotify = await shouldNotifyForRoom();
+        if (canNotify) {
+          const text = latestMessage?.content || latestMessage?.message || latestMessage?.text || 'New message';
+          if (Platform.OS === 'android') {
+            ToastAndroid.show(`New message: ${text}`, ToastAndroid.SHORT);
+          } else {
+            Alert.alert('New message', String(text));
+          }
+          lastNotifiedMessageIdRef.current = latestMessage.id;
+        }
+      }
     } catch (error) {
-      console.warn('[useMessages] polling error —', error?.message || error);
+      if (error?.response?.status === 429) {
+        poll429CountRef.current += 1;
+        const retryAfterMs = parseRetryAfterMs(error?.response?.headers?.['retry-after']);
+        const exponentialMs = Math.min(MAX_POLL_BACKOFF_MS, 2000 * (2 ** (poll429CountRef.current - 1)));
+        const backoffMs = Math.min(MAX_POLL_BACKOFF_MS, Math.max(retryAfterMs, exponentialMs));
+        pollBackoffUntilRef.current = Date.now() + backoffMs;
+        if (__DEV__) {
+          console.log(
+            `[useMessages] polling rate-limited (429) — backing off ${Math.ceil(backoffMs / 1000)}s`
+          );
+        }
+      } else {
+        poll429CountRef.current = 0;
+        pollBackoffUntilRef.current = 0;
+        console.warn('[useMessages] polling error —', error?.message || error);
+      }
     } finally {
       isLoadingRef.current = false;
     }
-  }, [chatRoom?.id, filterValidMessages]);
+  }, [chatRoom?.id, filterValidMessages, shouldNotifyForRoom]);
 
   const loadOlderMessages = useCallback(async () => {
     if (loadingOlderMessages || !hasMoreMessages) return;
@@ -275,6 +370,22 @@ const useMessages = ({ chatRoom, currentUser, navigation }) => {
     lastMessageIdRef.current = null;
     isLoadingRef.current = false;
 
+    // 1) Offline-first: show cached messages instantly
+    AsyncStorage.getItem(getRoomCacheKey(chatRoom.id))
+      .then((cached) => {
+        if (!mountedRef.current || !cached) return;
+        const parsed = JSON.parse(cached);
+        const validCached = filterValidMessages(Array.isArray(parsed) ? parsed : []);
+        const sortedCached = sortMessagesAsc(validCached);
+        if (sortedCached.length) {
+          setMessages(sortedCached);
+          lastMessageIdRef.current = sortedCached[sortedCached.length - 1].id;
+          setLoading(false);
+        }
+      })
+      .catch(() => {});
+
+    // 2) API sync in background
     loadMessages(1, false);
   }, [chatRoom?.id, loadMessages]);
 

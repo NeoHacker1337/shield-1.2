@@ -11,7 +11,6 @@ import styles from '../../assets/AppLockSettingsStyles';
 import Theme, { Colors, Fonts, Spacing } from '../../assets/theme';
 
 const AppLockSettingsScreen = () => {
-  const [biometricEnabled, setBiometricEnabled] = React.useState(false);
   const [autoLockEnabled, setAutoLockEnabled] = React.useState(true);
 
   return (
@@ -20,17 +19,6 @@ const AppLockSettingsScreen = () => {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Lock Method</Text>
 
-          <TouchableOpacity style={styles.optionItem}>
-            <Icon name="fingerprint" size={24} color={Colors.success} />
-            <Text style={styles.optionText}>Biometric Lock</Text>
-            <Switch
-              value={biometricEnabled}
-              onValueChange={setBiometricEnabled}
-              trackColor={{ false: Colors.borderLight, true: Colors.success }}
-              thumbColor={biometricEnabled ? Colors.textPrimary : '#f4f3f4'}
-            />
-          </TouchableOpacity>
-          
           <TouchableOpacity style={styles.optionItem}>
             <Icon name="lock" size={24} color={Colors.primary} />
             <Text style={styles.optionText}>PIN Lock</Text>
