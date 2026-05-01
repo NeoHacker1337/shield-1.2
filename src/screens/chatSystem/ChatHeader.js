@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import baseStyles from '../../assets/ChatSystemStyles';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ─────────────────────────────────────────────────────────────────
 // CONSTANTS
@@ -246,10 +247,14 @@ const ChatHeader = ({
   onArchive,
   onDotMenu,
 }) => {
+  const insets = useSafeAreaInsets();
+  const topGapStyle = { paddingTop: Math.max(insets.top, 0) + 6 };
+
   // ✅ Document priority: selection > search > normal
   if (selectionMode) {
     return (
-      <SelectionHeader
+      <View style={topGapStyle}>
+        <SelectionHeader
         selectedCount={selectedCount}
         onClose={onClose}
         onPin={onPin}
@@ -257,25 +262,30 @@ const ChatHeader = ({
         onArchive={onArchive}
         onDotMenu={onDotMenu}
       />
+      </View>
     );
   }
 
   if (searchMode) {
     return (
-      <SearchHeader
+      <View style={topGapStyle}>
+        <SearchHeader
         searchQuery={searchQuery}
         onSearchChange={onSearchChange}
         onSearchClose={onSearchClose}
       />
+      </View>
     );
   }
 
   return (
-    <NormalHeader
+    <View style={topGapStyle}>
+      <NormalHeader
       title={title}
       onSearchOpen={onSearchOpen}
       onNormalMenu={onNormalMenu}
     />
+    </View>
   );
 };
 

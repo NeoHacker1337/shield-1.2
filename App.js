@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { StatusBar, AppState } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Keychain from 'react-native-keychain';
@@ -287,7 +288,8 @@ const App = () => {
   if (!isReady) return null;
 
   return (
-    <NavigationContainer ref={globalNavigationRef}>
+    <SafeAreaProvider>
+      <NavigationContainer ref={globalNavigationRef}>
       <ChatVisibilityProvider>
         <SecurityVisibilityProvider>
           <ActiveRoomProvider>
@@ -304,7 +306,8 @@ const App = () => {
           </ActiveRoomProvider>
         </SecurityVisibilityProvider>
       </ChatVisibilityProvider>
-    </NavigationContainer>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 };
 

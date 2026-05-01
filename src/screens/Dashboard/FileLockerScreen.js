@@ -1466,8 +1466,8 @@ const FileLockerScreen = ({ navigation }) => {
     <View style={styles.container}>
       {/* Ensure content respects system bars */}
       <StatusBar
-        translucent={false}
-        backgroundColor="#1a1a2e"
+        translucent={true}
+        backgroundColor="transparent"
         barStyle="light-content"
       />
 
@@ -1510,14 +1510,19 @@ const FileLockerScreen = ({ navigation }) => {
       {/* Menu Button */}
       <TouchableOpacity
         onPress={openDrawer}
-        style={[styles.menuButton, { top: Math.max(insets.top + 8, 16) }]}
+        style={[styles.menuButton, { top: Math.max(insets.top + 10, 20) }]}
       >
         <Icon name="menu" size={24} color="#fff" />
       </TouchableOpacity>
 
       {/* Main Content */}
       <View style={styles.mainContent}>
-        <View style={styles.contentContainer}>
+        <View
+          style={[
+            styles.contentContainer,
+            { paddingTop: Math.max(insets.top + 68, 96) },
+          ]}
+        >
 
           {/* Search / Global Password Card */}
           <View style={styles.card}>
