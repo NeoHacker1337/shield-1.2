@@ -178,6 +178,19 @@ class AuthService {
     }
   }
 
+  async hasPasscode() {
+    try {
+      const encrypted = await SInfo.getItem('shield-passcode-bundle', {
+        sharedPreferencesName: 'shieldSharedPrefs',
+        keychainService: 'shieldKeychain',
+      });
+
+      return !!encrypted;
+    } catch {
+      return false;
+    }
+  }
+
   async removePasscode() {
     try {
       await SInfo.deleteItem('shield-passcode-bundle', {

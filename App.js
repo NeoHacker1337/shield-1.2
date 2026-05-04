@@ -67,6 +67,15 @@ export const globalNavigationRef = createNavigationContainerRef();
 const ONBOARDING_KEY = 'shield_onboarding_completed';
 const AUTH_SERVICE = 'shield-auth';
 
+const LIGHT_STATUS_BAR_SCREENS = new Set([
+  'ShareProfile',
+]);
+
+const STATUS_BAR_COLOR_BY_SCREEN = {
+  ShareProfile: '#ffffff',
+  ChatSystem: '#075E54',
+};
+
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 const AppNavigator = ({
@@ -160,7 +169,16 @@ const AppNavigator = ({
     <>
       <Stack.Navigator
         initialRouteName={initialRouteName}
-        screenOptions={{ headerShown: false }}>
+        screenOptions={({ route }) => {
+          const useDarkContent = LIGHT_STATUS_BAR_SCREENS.has(route.name);
+          return {
+            headerShown: false,
+            statusBarHidden: false,
+            statusBarStyle: useDarkContent ? 'dark' : 'light',
+            statusBarColor: STATUS_BAR_COLOR_BY_SCREEN[route.name] || '#000000',
+            statusBarTranslucent: false,
+          };
+        }}>
 
         {/* Onboarding */}
         <Stack.Screen name="OnBoarding" component={OnBoardingScreen} />
@@ -294,7 +312,7 @@ const App = () => {
         <SecurityVisibilityProvider>
           <ActiveRoomProvider>
             <NavigationContainer ref={globalNavigationRef}>
-              <StatusBar barStyle="light-content" backgroundColor="#000" />
+              <StatusBar hidden={false} translucent={false} barStyle="light-content" backgroundColor="#000000" />
               <AppNavigator
                 hasOnboarded={hasOnboarded}
                 hasCredentials={hasCredentials}

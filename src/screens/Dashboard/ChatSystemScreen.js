@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, FlatList, TouchableOpacity, SafeAreaView, StatusBar, RefreshControl, Alert, ActivityIndicator, Text } from 'react-native';
+import { View, FlatList, TouchableOpacity, StatusBar, RefreshControl, Alert, ActivityIndicator, Text } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import styles from '../../assets/ChatSystemStyles';
 
@@ -28,8 +29,10 @@ const ChatSystemScreen = ({ navigation }) => {
 
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <StatusBar translucent={false} backgroundColor="#075E54" barStyle="light-content" />
+
+      <View style={styles.container}>
 
       <ChatHeader
         // normal
@@ -209,6 +212,7 @@ const ChatSystemScreen = ({ navigation }) => {
         onConfirm={h.confirmLockedChatsPin}
       />
 
+      </View>
     </SafeAreaView>
   );
 };

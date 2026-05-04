@@ -7,7 +7,6 @@ import {
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import LinearGradient from 'react-native-linear-gradient';
 import { getUniqueId } from 'react-native-device-info';
-import * as Keychain from 'react-native-keychain';
 
 import AuthService from '../../services/AuthService';
 import { handleApiError } from '../../utils/errorHandler';
@@ -19,8 +18,6 @@ import ForgotPinModal from '../securityFeatures/ForgotPinModal';
 import { LOGIN_AUTH_SERVICE } from '../../services/pinService';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-
-const PASSCODE_AUTH_SERVICE = 'shield-passcode';
 
 const PasswordEntryScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
@@ -62,10 +59,8 @@ const PasswordEntryScreen = ({ navigation }) => {
   const checkPasscodeStatus = async () => {
     try {
       setIsCheckingPasscode(true);
-      const passcodeCredentials = await Keychain.getGenericPassword({
-        service: PASSCODE_AUTH_SERVICE,
-      });
-      setHasPasscode(!!passcodeCredentials);
+      const passcodeExists = await AuthService.hasPasscode();
+      setHasPasscode(passcodeExists);
     } catch {
       setHasPasscode(false);
     } finally {
@@ -84,10 +79,7 @@ const PasswordEntryScreen = ({ navigation }) => {
 
   const verifyPasscode = async (enteredPasscode) => {
     try {
-      const credentials = await Keychain.getGenericPassword({
-        service: PASSCODE_AUTH_SERVICE,
-      });
-      return credentials && credentials.password === enteredPasscode;
+      return await AuthService.verifyPasscode(enteredPasscode);
     } catch {
       return false;
     }
@@ -283,6 +275,9 @@ const PasswordEntryScreen = ({ navigation }) => {
                         placeholderTextColor="rgba(0, 255, 136, 0.4)"
                         keyboardType="email-address"
                         autoCapitalize="none"
+                        autoComplete="off"
+                        textContentType="none"
+                        importantForAutofill="no"
                         editable={!isLoading}
                         returnKeyType="next"
                         onSubmitEditing={() => passwordInputRef.current?.focus()}
@@ -305,6 +300,9 @@ const PasswordEntryScreen = ({ navigation }) => {
                       placeholder={hasPasscode ? 'ENTER PASSCODE' : 'ENTER PASSWORD'}
                       placeholderTextColor="rgba(0, 255, 136, 0.4)"
                       secureTextEntry
+                      autoComplete="off"
+                      textContentType="none"
+                      importantForAutofill="no"
                       editable={!isLoading}
                       onSubmitEditing={handleLogin}
                       keyboardType={hasPasscode ? 'numeric' : 'default'}
