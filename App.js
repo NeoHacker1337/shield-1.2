@@ -85,15 +85,12 @@ const AppNavigator = ({
   useEffect(() => {
     const loadUserId = async () => {
       try {
-        // Try AsyncStorage first (fastest)
         const cachedId = await AsyncStorage.getItem('current_user_id');
         if (cachedId) {
           setGlobalUserId(parseInt(cachedId, 10));
           console.log('[AppNavigator] UserId from cache:', cachedId);
           return;
         }
-
-        // Fallback: fetch from auth service
         const user = await AuthService.getCurrentUser();
         if (user?.id) {
           await AsyncStorage.setItem('current_user_id', String(user.id));
@@ -104,23 +101,23 @@ const AppNavigator = ({
         console.log('[AppNavigator] Failed to load userId:', e?.message);
       }
     };
-
     loadUserId();
   }, []);
 
   // ── Load rooms globally so the call listener has rooms immediately ─────────
+  // NOTE: This still runs to keep AsyncStorage warm as a cache.
+  // The hooks themselves also load rooms independently so they are never
+  // blocked waiting for this effect to complete first.
   useEffect(() => {
     if (!globalUserId) return;
-
     const loadRooms = async () => {
       try {
         const roomsRes = await chatService.getChatRooms();
         const rooms = Array.isArray(roomsRes?.data)
           ? roomsRes.data
           : Array.isArray(roomsRes)
-            ? roomsRes
-            : [];
-
+          ? roomsRes
+          : [];
         if (rooms.length > 0) {
           const ids = rooms.map(r => String(r.id));
           await AsyncStorage.setItem('watched_room_ids', JSON.stringify(ids));
@@ -130,11 +127,12 @@ const AppNavigator = ({
         console.log('[AppNavigator] Failed to load rooms:', e?.message);
       }
     };
-
     loadRooms();
   }, [globalUserId]);
 
-  // ── Global call listener — now truly global ────────────────────────────────
+  // ── Global call listeners ─────────────────────────────────────────────────
+  // Both hooks handle their own userId readiness check, room loading,
+  // and navigationRef.isReady() guard internally.
   useGlobalCallListener({
     navigationRef,
     currentUserId: globalUserId,
@@ -151,16 +149,15 @@ const AppNavigator = ({
     !hasOnboarded
       ? 'OnBoarding'
       : !hasCredentials
-        ? 'PasswordEntry'
-        : !isActivated
-          ? 'Activation'
-          : hasPasscode && !isUnlocked
-            ? 'PasswordEntry'
-            : 'MainTabs';
+      ? 'PasswordEntry'
+      : !isActivated
+      ? 'Activation'
+      : hasPasscode && !isUnlocked
+      ? 'PasswordEntry'
+      : 'MainTabs';
 
   return (
     <>
-      <StatusBar barStyle="light-content" />
       <Stack.Navigator
         initialRouteName={initialRouteName}
         screenOptions={{ headerShown: false }}>
@@ -171,16 +168,17 @@ const AppNavigator = ({
         <Stack.Screen name="SecurityQuestions" component={SecurityQuestionsScreen} />
 
         {/* Auth */}
-        <Stack.Screen name="PasswordEntry">
-          {(props) => (
-            <PasswordEntryScreen
-              {...props}
-              onUnlock={() => setIsUnlocked(true)}
-            />
-          )}
-        </Stack.Screen>
         <Stack.Screen name="PasswordRecovery" component={PasswordRecoveryScreen} />
         <Stack.Screen name="RecoverPin" component={RecoverPinScreen} />
+        <Stack.Screen
+          name="PasswordEntry"
+          children={(props) => (
+            <PasswordEntryScreen
+              {...props}
+              onUnlocked={() => setIsUnlocked(true)}
+            />
+          )}
+        />
 
         {/* Activation */}
         <Stack.Screen name="Activation" component={ActivationScreen} />
@@ -191,8 +189,10 @@ const AppNavigator = ({
         <Stack.Screen name="Security" component={SecurityScreen} />
         <Stack.Screen name="FileLocker" component={FileLockerScreen} />
         <Stack.Screen name="ShowSecurityQuestion" component={ShowSecurityQuestionScreen} />
+
         <Stack.Screen name="Chat" component={ChatScreen} />
         <Stack.Screen name="ChatSystem" component={Chat} />
+
         <Stack.Screen name="Profile" component={ProfileScreen} />
         <Stack.Screen name="GetPremium" component={GetPremiumScreen} />
         <Stack.Screen name="Feedback" component={FeedbackScreen} />
@@ -213,9 +213,12 @@ const AppNavigator = ({
         {/* Call Screens */}
         <Stack.Screen name="AudioCall" component={AudioCallScreen} />
         <Stack.Screen name="IncomingCall" component={IncomingCallScreen} />
+        {/* <Stack.Screen name="VideoCall" component={VideoCallScreen} />
+        <Stack.Screen name="IncomingVideoCall" component={IncomingVideoCallScreen} /> */}
 
-        <Stack.Screen name="VideoCallScreen" component={VideoCallScreen} />
+          <Stack.Screen name="VideoCallScreen" component={VideoCallScreen} />
         <Stack.Screen name="IncomingVideoCallScreen" component={IncomingVideoCallScreen} />
+
       </Stack.Navigator>
     </>
   );
@@ -256,7 +259,6 @@ const App = () => {
 
         if (token) {
           try {
-            // ✅ Always save current_user_id on app start
             const user = await AuthService.getCurrentUser();
             if (user?.id) {
               await AsyncStorage.setItem('current_user_id', String(user.id));
@@ -272,7 +274,6 @@ const App = () => {
         setIsReady(true);
       }
     };
-
     bootstrap();
   }, []);
 
@@ -289,24 +290,23 @@ const App = () => {
 
   return (
     <SafeAreaProvider>
-      <NavigationContainer ref={globalNavigationRef}>
       <ChatVisibilityProvider>
         <SecurityVisibilityProvider>
           <ActiveRoomProvider>
-
-            <AppNavigator
-              hasOnboarded={hasOnboarded}
-              hasCredentials={hasCredentials}
-              isActivated={isActivated}
-              hasPasscode={hasPasscode}
-              isUnlocked={isUnlocked}
-              setIsUnlocked={setIsUnlocked}
-            />
-
+            <NavigationContainer ref={globalNavigationRef}>
+              <StatusBar barStyle="light-content" backgroundColor="#000" />
+              <AppNavigator
+                hasOnboarded={hasOnboarded}
+                hasCredentials={hasCredentials}
+                isActivated={isActivated}
+                hasPasscode={hasPasscode}
+                isUnlocked={isUnlocked}
+                setIsUnlocked={setIsUnlocked}
+              />
+            </NavigationContainer>
           </ActiveRoomProvider>
         </SecurityVisibilityProvider>
       </ChatVisibilityProvider>
-      </NavigationContainer>
     </SafeAreaProvider>
   );
 };

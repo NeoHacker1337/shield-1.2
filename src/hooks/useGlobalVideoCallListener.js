@@ -4,8 +4,6 @@ import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import chatService from '../services/chatService';
 
-// Faster polling keeps incoming video-call screen responsive on devices
-// where network + room iteration previously caused noticeable delays.
 const POLL_INTERVAL = 1500;
 const ROOM_REFRESH_INTERVAL = 15000;
 
@@ -13,14 +11,14 @@ let cachedRoomIds = new Set();
 let lastRoomFetch = 0;
 
 const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId }) => {
-  const intervalRef = useRef(null);
-  const isNavigating = useRef(false);
+  const intervalRef   = useRef(null);
+  const isNavigating  = useRef(false);
   const activeRoomRef = useRef(activeRoomId);
-  const userIdRef = useRef(currentUserId);
-  const isMountedRef = useRef(true);
+  const userIdRef     = useRef(currentUserId);
+  const isMountedRef  = useRef(true);
   const roomCursorRef = useRef(0);
-  // ✅ CHANGE 1: isSelfCaller useCallback removed from here
 
+  // FIX #1: Keep refs in sync so pollTick always reads fresh values
   useEffect(() => { activeRoomRef.current = activeRoomId; }, [activeRoomId]);
   useEffect(() => { userIdRef.current = currentUserId; }, [currentUserId]);
 
@@ -31,12 +29,11 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
     return route.name;
   }, []);
 
+  // FIX #3: Rooms fetched fresh inside hook — not dependent on App.js timing
   const refreshRoomIds = useCallback(async () => {
     try {
       const now = Date.now();
-      if (now - lastRoomFetch < ROOM_REFRESH_INTERVAL && cachedRoomIds.size > 0) {
-        return;
-      }
+      if (now - lastRoomFetch < ROOM_REFRESH_INTERVAL && cachedRoomIds.size > 0) return;
       lastRoomFetch = now;
 
       const res = await chatService.getChatRooms();
@@ -51,18 +48,14 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
       const stored = await AsyncStorage.getItem('watched_room_ids');
       if (stored) {
         const ids = JSON.parse(stored);
-        if (Array.isArray(ids)) {
-          ids.forEach(id => cachedRoomIds.add(String(id)));
-        }
+        if (Array.isArray(ids)) ids.forEach(id => cachedRoomIds.add(String(id)));
       }
     } catch (e) {
       try {
         const stored = await AsyncStorage.getItem('watched_room_ids');
         if (stored) {
           const ids = JSON.parse(stored);
-          if (Array.isArray(ids)) {
-            ids.forEach(id => cachedRoomIds.add(String(id)));
-          }
+          if (Array.isArray(ids)) ids.forEach(id => cachedRoomIds.add(String(id)));
         }
       } catch {}
     }
@@ -87,9 +80,11 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
         return;
       }
 
+      // FIX #1: Always read from ref — never stale even if prop was null on mount
       const userId = userIdRef.current;
       if (!userId) return;
 
+      // FIX #4: navigationRef.isReady() guard
       const nav = navigationRef?.current;
       if (!nav || !nav.isReady?.()) return;
 
@@ -99,9 +94,7 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
         topScreen === 'VideoCallScreen' ||
         topScreen === 'IncomingCall' ||
         topScreen === 'AudioCall'
-      ) {
-        return;
-      }
+      ) return;
 
       await refreshRoomIds();
       if (cachedRoomIds.size === 0) return;
@@ -111,8 +104,8 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
       cachedRoomIds.forEach(id => {
         if (!roomsToCheck.includes(id)) roomsToCheck.push(id);
       });
+
       const MAX_ROOMS_PER_TICK = 5;
-      // Round-robin window prevents starving rooms at the end of the list.
       let limitedRooms = roomsToCheck;
       if (roomsToCheck.length > MAX_ROOMS_PER_TICK) {
         const cursor = roomCursorRef.current % roomsToCheck.length;
@@ -130,11 +123,16 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
           if (callStatus !== 'active') continue;
 
           const res = await chatService.getVideoCallOffer(roomId);
-          const offer = res?.data?.offer;
+          const offer    = res?.data?.offer;
           const callerId = res?.data?.caller_id ?? res?.data?.callerId ?? res?.data?.user_id;
 
           if (!offer) continue;
-          // ✅ CHANGE 2: if (isSelfCaller(callerId)) continue; — removed
+
+          // FIX #2: Skip calls initiated by the current user themselves
+          if (callerId && String(callerId) === String(userIdRef.current)) {
+            console.log('[GlobalVideoCallListener] Skipping own outgoing video call in room:', roomId);
+            continue;
+          }
 
           console.log('[GlobalVideoCallListener] Incoming video call | room:', roomId, '| caller:', callerId);
 
@@ -147,9 +145,7 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
           });
 
           setTimeout(() => {
-            if (isMountedRef.current) {
-              isNavigating.current = false;
-            }
+            if (isMountedRef.current) isNavigating.current = false;
           }, 5000);
 
           break;
@@ -161,7 +157,7 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
     } catch (e) {
       if (__DEV__) console.log('[GlobalVideoCallListener] Poll error:', e?.message);
     }
-  }, [getActiveRouteName, navigationRef, refreshRoomIds]); // ✅ CHANGE 3: isSelfCaller removed from deps
+  }, [getActiveRouteName, navigationRef, refreshRoomIds]);
 
   const startPolling = useCallback(() => {
     stopPolling();
@@ -180,10 +176,12 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
     return () => sub.remove();
   }, [startPolling]);
 
+  // FIX #2: useEffect on [currentUserId] — re-runs the moment userId resolves from null
   useEffect(() => {
     isMountedRef.current = true;
 
     if (!currentUserId) {
+      console.log('[GlobalVideoCallListener] No userId — waiting to start polling');
       stopPolling();
       return;
     }
