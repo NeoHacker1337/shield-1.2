@@ -189,6 +189,8 @@ const chatService = {
     api.get(`/v1/video-call/ice/${roomId}`),
 
 
+  getUserById: (userId) => api.get(`/users/${userId}`),
+  
 };
 
 export default chatService;

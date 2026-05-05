@@ -1,4 +1,3 @@
-// webrtcService.js
 import {
     RTCPeerConnection,
     mediaDevices,
@@ -11,22 +10,30 @@ const configuration = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+
+        // ✅ Metered.ca — more reliable free TURN
         {
-            urls: 'turn:openrelay.metered.ca:80',
-            username: 'openrelayproject',
-            credential: 'openrelayproject',
+            urls: 'turn:standard.relay.metered.ca:80',
+            username: 'e84571c40a30c4765da8cddb',
+            credential: 'uMrSWdKJ+MHobRAH',
         },
         {
-            urls: 'turn:openrelay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject',
+            urls: 'turn:standard.relay.metered.ca:80?transport=tcp',
+            username: 'e84571c40a30c4765da8cddb',
+            credential: 'uMrSWdKJ+MHobRAH',
         },
         {
-            urls: 'turns:openrelay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject',
+            urls: 'turn:standard.relay.metered.ca:443',
+            username: 'e84571c40a30c4765da8cddb',
+            credential: 'uMrSWdKJ+MHobRAH',
+        },
+        {
+            urls: 'turns:standard.relay.metered.ca:443?transport=tcp',
+            username: 'e84571c40a30c4765da8cddb',
+            credential: 'uMrSWdKJ+MHobRAH',
         },
     ],
+    iceCandidatePoolSize: 10,
 };
 
 class WebRTCService {
@@ -56,13 +63,22 @@ class WebRTCService {
         this.pc = new RTCPeerConnection(configuration);
         console.log('[webrtcService] PC created | signalingState:', this.pc.signalingState);
 
+        // ✅ Correct — call the method, don't define it here
+        this._testTurnReachability();
+
+        // ✅ ICE candidate with type logging
         this.pc.onicecandidate = (event) => {
             if (event.candidate && this.currentRoomId) {
-                console.log('[webrtcService] ICE candidate generated | room:', this.currentRoomId);
+                const raw = event.candidate.candidate ?? '';
+                const typeMatch = raw.match(/typ\s+(\w+)/);
+                const type = event.candidate.type ?? typeMatch?.[1] ?? 'unknown';
+                console.log(`[webrtcService] ICE candidate | type: ${type} | ${raw.substring(0, 60)}`);
                 chatService.sendIceCandidate({
                     room_id: this.currentRoomId,
                     candidate: event.candidate,
                 });
+            } else if (!event.candidate) {
+                console.log('[webrtcService] ICE gathering complete ✅');
             }
         };
 
@@ -107,6 +123,32 @@ class WebRTCService {
         console.log('[webrtcService] init() complete | roomId:', roomId);
     }
 
+    // ✅ Defined OUTSIDE init() — as a proper class method
+    _testTurnReachability() {
+        const testPC = new RTCPeerConnection(configuration);
+        testPC.createDataChannel('turn-test');
+        testPC.createOffer()
+            .then(offer => testPC.setLocalDescription(offer))
+            .catch(() => { });
+
+        testPC.onicecandidate = (e) => {
+            if (e.candidate) {
+                const raw = e.candidate.candidate ?? '';
+                const typeMatch = raw.match(/typ\s+(\w+)/);
+                const type = typeMatch?.[1] ?? 'unknown';
+                console.log(`[TURN TEST] candidate type: ${type} | ${raw.substring(0, 80)}`);
+                if (type === 'relay') {
+                    console.log('[TURN TEST] ✅ TURN server is reachable — relay candidates generating');
+                }
+            } else {
+                console.log('[TURN TEST] ICE gathering complete');
+                testPC.close();
+            }
+        };
+
+        setTimeout(() => testPC.close(), 10000);
+    }
+
     // ────────────── CALLER (Device A) ──────────────
     async startCaller(roomId, callerId) {
         await this.init(roomId);
@@ -123,7 +165,6 @@ class WebRTCService {
 
         const offerPayload = { type: offer.type, sdp: offer.sdp };
 
-        // ✅ use sendCallOffer (not sendOffer)
         await chatService.sendCallOffer({
             room_id: roomId,
             caller_id: callerId,
@@ -168,7 +209,7 @@ class WebRTCService {
             }
 
             const cleanedSdp = this.cleanSdp(sdpData.sdp);
-            console.log('[webrtcService] SDP has real CRLF:', cleanedSdp.includes('\r\n'));
+            console.log('[webrtcService] SDP CRLF check:', cleanedSdp.includes('\r\n'));
 
             try {
                 await this.pc.setRemoteDescription(
@@ -190,7 +231,6 @@ class WebRTCService {
 
             const answerPayload = { type: answer.type, sdp: answer.sdp };
 
-            // ✅ Send directly — don't rely on AudioCallScreen
             await chatService.sendCallAnswer({
                 room_id: this.currentRoomId,
                 answer: answerPayload,
@@ -203,16 +243,15 @@ class WebRTCService {
             console.error('[webrtcService] createAnswer ERROR:', e?.message);
             throw e;
         } finally {
-            this._answerInProgress = false; // ✅ always resets
+            this._answerInProgress = false;
         }
     }
-
 
     async setRemoteAnswer(answer) {
         if (!this.pc) throw new Error('[webrtcService] setRemoteAnswer — PC is null');
         if (this.pc.signalingState !== 'have-local-offer') {
             throw new Error(
-                `[webrtcService] setRemoteAnswer — wrong signalingState: ${this.pc.signalingState} (expected "have-local-offer")`
+                `[webrtcService] setRemoteAnswer — wrong signalingState: ${this.pc.signalingState}`
             );
         }
 
@@ -229,21 +268,19 @@ class WebRTCService {
         const cleanSdp = this.cleanSdp(sdpData.sdp);
 
         console.log('[webrtcService] Answer SDP line 1:', cleanSdp.split('\r\n')[0]);
-        console.log('[webrtcService] Answer SDP has real CRLF:', cleanSdp.includes('\r\n'));
+        console.log('[webrtcService] Answer SDP CRLF check:', cleanSdp.includes('\r\n'));
 
-        const remoteDesc = new RTCSessionDescription({
-            type: sdpData.type,
-            sdp: cleanSdp,
-        });
+        await this.pc.setRemoteDescription(
+            new RTCSessionDescription({ type: sdpData.type, sdp: cleanSdp })
+        );
 
-        await this.pc.setRemoteDescription(remoteDesc);
         this._remoteDescSet = true;
         console.log('[webrtcService] setRemoteAnswer OK ✅ | signalingState:', this.pc.signalingState);
 
         await this.flushPendingIceCandidates();
     }
 
-    // ────────────── ICE handling (both sides) ──────────────
+    // ────────────── ICE handling ──────────────
     addIceCandidate(candidate) {
         if (!this.pc || !candidate) return;
 
@@ -273,30 +310,31 @@ class WebRTCService {
         this.pendingIceCandidates = [];
     }
 
+    // ✅ FIXED cleanSdp — normalizes to CRLF (RFC 4566)
     cleanSdp(sdp) {
         if (!sdp) return sdp;
 
-        // Step 1: Unescape literal \r\n text (from JSON double-encoding)
+        // Step 1: Fix double-encoded escaped sequences
         if (sdp.includes('\\r\\n')) {
-            sdp = sdp.replace(/\\r\\n/g, '\n');  // → \n directly, not \r\n
+            sdp = sdp.replace(/\\r\\n/g, '\r\n');
             console.log('[webrtcService] Fixed literal \\r\\n');
         }
-
         if (sdp.includes('\\n')) {
-            sdp = sdp.replace(/\\n/g, '\n');
+            sdp = sdp.replace(/\\n/g, '\r\n');
             console.log('[webrtcService] Fixed literal \\n');
         }
 
-        // Step 2: Normalize ALL line endings to \n only
-        // react-native-webrtc Android native layer requires \n, NOT \r\n
-        sdp = sdp.replace(/\r\n/g, '\n');  // CRLF → LF
-        sdp = sdp.replace(/\r/g, '\n');    // lone CR → LF
+        // Step 2: Normalize all line endings → CRLF
+        sdp = sdp.replace(/\r\n/g, '\n');  // normalize first
+        sdp = sdp.replace(/\r/g, '\n');    // handle lone \r
+        sdp = sdp.replace(/\n/g, '\r\n'); // convert ALL to \r\n
 
-        // Step 3: Ensure SDP ends with a newline
-        if (!sdp.endsWith('\n')) {
-            sdp = sdp + '\n';
+        // Step 3: Ensure ends with CRLF
+        if (!sdp.endsWith('\r\n')) {
+            sdp = sdp + '\r\n';
         }
 
+        console.log('[webrtcService] SDP CRLF check:', sdp.includes('\r\n'));
         return sdp;
     }
 

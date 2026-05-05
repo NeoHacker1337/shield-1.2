@@ -5,7 +5,7 @@
  * - Remote video fills the screen
  * - Local video as draggable PiP (top-right)
  * - Controls: mute, video toggle, flip camera, speaker, end call
- * - All AudioCallScreen polling bugs fixed
+ * - Caller ringback tone via incallmanager_ringback.mp3
  */
 
 import React, { useEffect, useState, useRef } from 'react';
@@ -33,37 +33,43 @@ const PIP_W = 110;
 const PIP_H = 150;
 const DISCONNECTED_GRACE_MS = 5000;
 
+// ✅ Stop all tones — used when call connects or ends
+const stopCallTones = () => {
+    try { InCallManager.stopRingback(); } catch (_) { }
+};
+
 const normalizeSessionDescription = (payload, key) => {
     if (!payload) return null;
-    if (payload?.type && payload?.sdp)                           return payload;
-    if (payload?.[key]?.type && payload?.[key]?.sdp)             return payload[key];
+    if (payload?.type && payload?.sdp) return payload;
+    if (payload?.[key]?.type && payload?.[key]?.sdp) return payload[key];
     if (payload?.data?.[key]?.type && payload?.data?.[key]?.sdp) return payload.data[key];
-    if (payload?.data?.type && payload?.data?.sdp)               return payload.data;
+    if (payload?.data?.type && payload?.data?.sdp) return payload.data;
     return null;
 };
 
 const VideoCallScreen = ({ route, navigation }) => {
     const { userId, roomId, isCaller, callerName } = route.params ?? {};
 
-    const [status, setStatus]             = useState('Connecting...');
-    const [isMuted, setIsMuted]           = useState(false);
-    const [isVideoOff, setIsVideoOff]     = useState(false);
-    const [isSpeaker, setIsSpeaker]       = useState(true);
-    const [localStreamURL, setLocalStreamURL]   = useState(null);
+    const [status, setStatus] = useState('Connecting...');
+    const [isMuted, setIsMuted] = useState(false);
+    const [isVideoOff, setIsVideoOff] = useState(false);
+    const [isSpeaker, setIsSpeaker] = useState(true);
+    const [localStreamURL, setLocalStreamURL] = useState(null);
     const [remoteStreamURL, setRemoteStreamURL] = useState(null);
     const [controlsVisible, setControlsVisible] = useState(true);
 
     // PiP drag position
     const pipPos = useRef(new Animated.ValueXY({ x: SCREEN_W - PIP_W - 16, y: 48 })).current;
 
-    const hasAnswered           = useRef(false);
-    const hasSetRemoteAnswer    = useRef(false);
-    const appliedIceCandidates  = useRef(new Set()); // ✅ keyed by candidate string
-    const hasEndedCall          = useRef(false);
-    const intervalRef           = useRef(null);
-    const controlsTimerRef      = useRef(null);
-    const callStartTime         = useRef(Date.now());
-    const disconnectTimeoutRef  = useRef(null);
+    const hasAnswered = useRef(false);
+    const hasSetRemoteAnswer = useRef(false);
+    const appliedIceCandidates = useRef(new Set());
+    const hasEndedCall = useRef(false);
+    const intervalRef = useRef(null);
+    const controlsTimerRef = useRef(null);
+    const callStartTime = useRef(Date.now());
+    const disconnectTimeoutRef = useRef(null);
+    const isRingbackPlayingRef = useRef(false); // ✅ track ringback state
 
     // Auto-hide controls after 4s
     const resetControlsTimer = () => {
@@ -84,6 +90,16 @@ const VideoCallScreen = ({ route, navigation }) => {
         },
     });
 
+    // ✅ Mark connected — stop ringback, switch to call audio
+    const markConnected = () => {
+        setStatus('Connected ✓');
+        if (isRingbackPlayingRef.current) {
+            stopCallTones();
+            isRingbackPlayingRef.current = false;
+            console.log('[VideoCallScreen] Ringback stopped — call connected ✅');
+        }
+    };
+
     useEffect(() => {
         if (!roomId || typeof isCaller !== 'boolean') {
             setStatus('Missing call details');
@@ -97,22 +113,34 @@ const VideoCallScreen = ({ route, navigation }) => {
             setLocalStreamURL(stream.toURL());
         };
 
+        // ✅ Stop ringback when remote stream arrives
         webrtcVideoService.onRemoteStream = (stream) => {
             console.log('[VideoCallScreen] Remote stream arrived ✅');
+
+            if (!stream) {
+                console.log('[ERROR] Remote stream is NULL ❌');
+                return;
+            }
+
+            console.log('[STREAM TRACKS]', stream.getTracks().map(t => t.kind));
+
             setRemoteStreamURL(stream.toURL());
-            setStatus('Connected ✓');
+            markConnected();
             resetControlsTimer();
         };
 
         webrtcVideoService.onConnectionState = (state) => {
             console.log('[VideoCallScreen] connectionState:', state);
 
-            if (state === 'connected') {
-                if (disconnectTimeoutRef.current) {
-                    clearTimeout(disconnectTimeoutRef.current);
-                    disconnectTimeoutRef.current = null;
+            if (state === 'connected' || state === 'completed') {
+                markConnected();
+
+                // 🔥 FORCE remote stream refresh (important fix)
+                const stream = webrtcVideoService.remoteStream;
+                if (stream) {
+                    console.log('[FIX] Forcing remote stream update');
+                    setRemoteStreamURL(stream.toURL());
                 }
-                setStatus('Connected ✓');
             }
 
             if (state === 'disconnected') {
@@ -127,11 +155,6 @@ const VideoCallScreen = ({ route, navigation }) => {
                 return;
             }
 
-            if (disconnectTimeoutRef.current) {
-                clearTimeout(disconnectTimeoutRef.current);
-                disconnectTimeoutRef.current = null;
-            }
-
             if (state === 'closed' || state === 'failed') {
                 console.log('[VideoCallScreen] Connection failed — ending call');
                 handleRemoteEndCall();
@@ -143,9 +166,17 @@ const VideoCallScreen = ({ route, navigation }) => {
         // ─── Polling loop (every 3s) ───
         intervalRef.current = setInterval(async () => {
             try {
-                // Call status check
+
+                if (webrtcVideoService.pc) {
+                    console.log('[DEBUG STATE]',
+                        webrtcVideoService.pc.connectionState,
+                        webrtcVideoService.pc.iceConnectionState
+                    );
+                }
+
+
                 const statusRes = await chatService.getVideoCallStatus(roomId);
-                const callAge   = Date.now() - callStartTime.current;
+                const callAge = Date.now() - callStartTime.current;
                 const callStatus = statusRes?.data?.status;
 
                 if (callStatus === 'ended' && !hasEndedCall.current && callAge > 15000) {
@@ -156,9 +187,8 @@ const VideoCallScreen = ({ route, navigation }) => {
 
                 // ── CALLER: wait for answer ──
                 if (isCaller && !hasSetRemoteAnswer.current) {
-                    const res    = await chatService.getVideoCallAnswer(roomId);
+                    const res = await chatService.getVideoCallAnswer(roomId);
                     const answer = normalizeSessionDescription(res?.data, 'answer');
-
                     if (answer) {
                         console.log('[VideoCallScreen] Answer found ✅ — setting remote answer');
                         await webrtcVideoService.setRemoteAnswer(answer);
@@ -169,18 +199,22 @@ const VideoCallScreen = ({ route, navigation }) => {
 
                 // ── RECEIVER: wait for offer then answer ──
                 if (!isCaller && !hasAnswered.current) {
-                    const res   = await chatService.getVideoCallOffer(roomId);
+                    const res = await chatService.getVideoCallOffer(roomId);
                     const offer = normalizeSessionDescription(res?.data, 'offer');
-
                     if (offer?.type && offer?.sdp) {
                         console.log('[VideoCallScreen] Offer ready | sdp length:', offer.sdp.length);
                         try {
-                            const answer = await webrtcVideoService.createAnswer(offer);
-                            if (answer) {
-                                hasAnswered.current = true;
-                                setStatus('Connecting...');
-                                console.log('[VideoCallScreen] createAnswer complete ✅');
+                            if (webrtcVideoService.pc?.signalingState !== 'stable') {
+                                console.log('[FIX] Reinitializing PC before answer');
+                                await webrtcVideoService.init(roomId);
                             }
+
+                            await webrtcVideoService.createAnswer(offer);
+                            // if (answer) {
+                            //     hasAnswered.current = true;
+                            //     setStatus('Connecting...');
+                            //     console.log('[VideoCallScreen] createAnswer complete ✅');
+                            // }
                         } catch (answerError) {
                             console.log('[VideoCallScreen] createAnswer failed:', answerError?.message);
                             const sigState = webrtcVideoService.pc?.signalingState;
@@ -194,14 +228,13 @@ const VideoCallScreen = ({ route, navigation }) => {
                 }
 
                 // ── ICE exchange (both sides) ──
-                const iceRes    = await chatService.getVideoIceCandidates(roomId);
+                const iceRes = await chatService.getVideoIceCandidates(roomId);
                 const candidates = iceRes?.data?.candidates || [];
 
                 console.log('[VideoCallScreen] ICE poll | found:', candidates.length,
-                            '| applied:', appliedIceCandidates.current.size);
+                    '| applied:', appliedIceCandidates.current.size);
 
                 candidates.forEach((c) => {
-                    // ✅ Dedup by candidate string — not array index
                     const key = c?.candidate ?? JSON.stringify(c);
                     if (key && !appliedIceCandidates.current.has(key)) {
                         appliedIceCandidates.current.add(key);
@@ -226,14 +259,17 @@ const VideoCallScreen = ({ route, navigation }) => {
 
         return () => {
             console.log('[VideoCallScreen] Cleanup');
-            if (intervalRef.current)         { clearInterval(intervalRef.current);   intervalRef.current = null; }
+            if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
             if (disconnectTimeoutRef.current) { clearTimeout(disconnectTimeoutRef.current); disconnectTimeoutRef.current = null; }
-            if (controlsTimerRef.current)     { clearTimeout(controlsTimerRef.current); controlsTimerRef.current = null; }
+            if (controlsTimerRef.current) { clearTimeout(controlsTimerRef.current); controlsTimerRef.current = null; }
             backHandler.remove();
+            stopCallTones(); // ✅ always stop ringback on cleanup
+            isRingbackPlayingRef.current = false;
             InCallManager.stop();
             if (!hasEndedCall.current) {
                 hasEndedCall.current = true;
                 global.isCallActive = false;
+                global.activeCallType = null;
                 webrtcVideoService.close();
                 chatService.endVideoCall(roomId);
                 AsyncStorage.setItem('call_just_ended', 'true');
@@ -252,32 +288,40 @@ const VideoCallScreen = ({ route, navigation }) => {
                     PermissionsAndroid.PERMISSIONS.CAMERA,
                 ]);
 
-                const audioOk  = granted[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] === PermissionsAndroid.RESULTS.GRANTED;
-                const cameraOk = granted[PermissionsAndroid.PERMISSIONS.CAMERA]        === PermissionsAndroid.RESULTS.GRANTED;
+                const audioOk = granted[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] === PermissionsAndroid.RESULTS.GRANTED;
+                const cameraOk = granted[PermissionsAndroid.PERMISSIONS.CAMERA] === PermissionsAndroid.RESULTS.GRANTED;
 
                 if (!audioOk || !cameraOk) {
-                    setStatus(
-                        !cameraOk ? 'Camera permission denied' : 'Microphone permission denied'
-                    );
+                    setStatus(!cameraOk ? 'Camera permission denied' : 'Microphone permission denied');
                     return;
                 }
             }
 
             global.isCallActive = true;
             global.activeCallType = 'video';
-            InCallManager.start({ media: 'video' });
             InCallManager.setKeepScreenOn(true);
             InCallManager.setForceSpeakerphoneOn(true);
 
             if (isCaller) {
+                // ✅ Caller — start with ringback tone playing
+                InCallManager.start({ media: 'video', ringback: '_BUNDLE_' });
+                isRingbackPlayingRef.current = true;
+                console.log('[VideoCallScreen] Caller ringback started ✅');
+
                 await webrtcVideoService.startCaller(roomId, userId);
                 setStatus('Calling...');
+
             } else {
+                // ✅ Receiver — silent start, no ringback
+                InCallManager.start({ media: 'video' });
                 await webrtcVideoService.init(roomId);
                 setStatus('Connecting...');
             }
+
         } catch (e) {
             console.log('[VideoCallScreen] startCall error:', e?.message);
+            stopCallTones();
+            isRingbackPlayingRef.current = false;
             setStatus('Connection Failed');
         }
     };
@@ -289,9 +333,11 @@ const VideoCallScreen = ({ route, navigation }) => {
         if (hasEndedCall.current) return;
         hasEndedCall.current = true;
 
-        if (intervalRef.current)         { clearInterval(intervalRef.current);   intervalRef.current = null; }
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
         if (disconnectTimeoutRef.current) { clearTimeout(disconnectTimeoutRef.current); disconnectTimeoutRef.current = null; }
 
+        stopCallTones(); // ✅ stop ringback if call ended before receiver picked up
+        isRingbackPlayingRef.current = false;
         InCallManager.stop();
         global.isCallActive = false;
         global.activeCallType = null;
@@ -307,9 +353,11 @@ const VideoCallScreen = ({ route, navigation }) => {
         if (hasEndedCall.current) return;
         hasEndedCall.current = true;
 
-        if (intervalRef.current)         { clearInterval(intervalRef.current);   intervalRef.current = null; }
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
         if (disconnectTimeoutRef.current) { clearTimeout(disconnectTimeoutRef.current); disconnectTimeoutRef.current = null; }
 
+        stopCallTones(); // ✅ stop ringback
+        isRingbackPlayingRef.current = false;
         InCallManager.stop();
         global.isCallActive = false;
         global.activeCallType = null;
@@ -356,7 +404,7 @@ const VideoCallScreen = ({ route, navigation }) => {
     // RENDER
     // ─────────────────────────────────────────────
     return (
-        <View style={styles.container} onTouchStart={resetControlsTimer}>
+        <View style={styles.container}>
             <StatusBar hidden />
 
             {/* ── Remote video — full screen background ── */}
@@ -377,7 +425,7 @@ const VideoCallScreen = ({ route, navigation }) => {
 
             {/* ── Local video — draggable PiP ── */}
             <Animated.View
-                style={[styles.localVideoPip, pipPos.getLayout()]}
+                style={[styles.localVideoPip, { transform: pipPos.getTranslateTransform() }]}
                 {...pipResponder.panHandlers}
             >
                 {localStreamURL && !isVideoOff ? (
@@ -386,7 +434,6 @@ const VideoCallScreen = ({ route, navigation }) => {
                         style={styles.localVideoView}
                         objectFit="cover"
                         mirror={true}
-                        zOrder={1}
                     />
                 ) : (
                     <View style={styles.localVideoOff}>
@@ -406,6 +453,7 @@ const VideoCallScreen = ({ route, navigation }) => {
             {controlsVisible && (
                 <View style={styles.controlsWrapper}>
                     <View style={styles.controlsRow}>
+
                         {/* Mute */}
                         <TouchableOpacity
                             style={[styles.controlBtn, isMuted && styles.controlBtnActive]}
@@ -420,7 +468,7 @@ const VideoCallScreen = ({ route, navigation }) => {
                             style={[styles.controlBtn, isVideoOff && styles.controlBtnActive]}
                             onPress={toggleVideo}
                         >
-                            <Text style={styles.controlIcon}>{isVideoOff ? '📷' : '📷'}</Text>
+                            <Text style={styles.controlIcon}>📷</Text>
                             <Text style={styles.controlLabel}>{isVideoOff ? 'Start Video' : 'Stop Video'}</Text>
                         </TouchableOpacity>
 
@@ -432,27 +480,25 @@ const VideoCallScreen = ({ route, navigation }) => {
 
                         {/* Speaker */}
                         <TouchableOpacity
-                            style={[styles.controlBtn, !isSpeaker && styles.controlBtnActive]}
+                            style={[styles.controlBtn, isSpeaker && styles.controlBtnActive]}
                             onPress={toggleSpeaker}
                         >
                             <Text style={styles.controlIcon}>{isSpeaker ? '🔊' : '🔈'}</Text>
                             <Text style={styles.controlLabel}>{isSpeaker ? 'Speaker' : 'Earpiece'}</Text>
                         </TouchableOpacity>
-                    </View>
 
-                    {/* End call */}
-                    <TouchableOpacity style={styles.endCallBtn} onPress={handleEndCall}>
-                        <Text style={styles.endCallIcon}>📵</Text>
-                    </TouchableOpacity>
+                        {/* End call */}
+                        <TouchableOpacity style={styles.endCallBtn} onPress={handleEndCall}>
+                            <Text style={styles.endCallIcon}>📵</Text>
+                        </TouchableOpacity>
+
+                    </View>
                 </View>
             )}
 
             {/* Minimal end call always visible when controls hidden */}
             {!controlsVisible && (
-                <TouchableOpacity
-                    style={styles.endCallBtnMinimal}
-                    onPress={handleEndCall}
-                >
+                <TouchableOpacity style={styles.endCallBtnMinimal} onPress={handleEndCall}>
                     <Text style={styles.endCallIcon}>📵</Text>
                 </TouchableOpacity>
             )}
@@ -479,8 +525,8 @@ const styles = StyleSheet.create({
         backgroundColor: '#0d1b2a',
     },
     placeholderAvatar: { fontSize: 88, marginBottom: 12 },
-    placeholderName:   { color: '#fff', fontSize: 22, fontWeight: '700', marginBottom: 8 },
-    statusText:        { color: '#aac4e0', fontSize: 16 },
+    placeholderName: { color: '#fff', fontSize: 22, fontWeight: '700', marginBottom: 8 },
+    statusText: { color: '#aac4e0', fontSize: 16 },
 
     // Local PiP
     localVideoPip: {
@@ -547,7 +593,7 @@ const styles = StyleSheet.create({
     controlBtnActive: {
         backgroundColor: 'rgba(255,255,255,0.35)',
     },
-    controlIcon:  { fontSize: 22, marginBottom: 4 },
+    controlIcon: { fontSize: 22, marginBottom: 4 },
     controlLabel: { color: '#fff', fontSize: 11, textAlign: 'center' },
 
     // End call button

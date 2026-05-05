@@ -19,6 +19,12 @@ import chatService from '../services/chatService';
 
 const DISCONNECTED_GRACE_MS = 5000;
 
+// Stops all tones that could be playing on either device.
+const stopCallTones = () => {
+    try { InCallManager.stopRingtone(); } catch (_) { }
+    try { InCallManager.stopRingback(); } catch (_) { }
+};
+
 const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -27,7 +33,6 @@ const formatDuration = (seconds) => {
 
 const getStatusTone = (status, isOnHold) => {
     const value = String(status || '').toLowerCase();
-
     if (isOnHold) return 'hold';
     if (value.includes('denied') || value.includes('failed') || value.includes('ended')) return 'ended';
     if (value.includes('connected')) return 'ongoing';
@@ -59,12 +64,10 @@ const ControlButton = ({ iconName, label, active, onPress, compact }) => (
 
 const normalizeSessionDescription = (payload, key) => {
     if (!payload) return null;
-
     if (payload?.type && payload?.sdp) return payload;
     if (payload?.[key]?.type && payload?.[key]?.sdp) return payload[key];
     if (payload?.data?.[key]?.type && payload?.data?.[key]?.sdp) return payload.data[key];
     if (payload?.data?.type && payload?.data?.sdp) return payload.data;
-
     return null;
 };
 
@@ -75,7 +78,7 @@ const AudioCallScreen = ({ route, navigation }) => {
 
     const [status, setStatus] = useState('Connecting...');
     const [isMuted, setIsMuted] = useState(false);
-    const [isSpeaker, setIsSpeaker] = useState(true);
+    const [isSpeaker, setIsSpeaker] = useState(false);
     const [isOnHold, setIsOnHold] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
     const [durationSeconds, setDurationSeconds] = useState(0);
@@ -84,6 +87,8 @@ const AudioCallScreen = ({ route, navigation }) => {
     const hasSetRemoteAnswer = useRef(false);
     const appliedIceCandidates = useRef(new Set());
     const hasEndedCall = useRef(false);
+    // ✅ FIX (Code 2 bug): isMountedRef was missing entirely in Code 2
+    const isMountedRef = useRef(true);
     const intervalRef = useRef(null);
     const durationIntervalRef = useRef(null);
     const callStartTime = useRef(Date.now());
@@ -91,7 +96,8 @@ const AudioCallScreen = ({ route, navigation }) => {
     const disconnectTimeoutRef = useRef(null);
     const isRingtonePlayingRef = useRef(false);
     const callerRetryTimeoutRef = useRef(null);
-
+    const currentUserIdRef = useRef(null);
+    const ringbackSoundRef = useRef(null);
     const displayName = callerName || (isCaller ? 'Outgoing Call' : 'Incoming Call');
     const avatarInitial = String(displayName || 'C').trim().charAt(0).toUpperCase() || 'C';
     const statusTone = getStatusTone(status, isOnHold);
@@ -102,15 +108,55 @@ const AudioCallScreen = ({ route, navigation }) => {
             ? 'Waiting for answer'
             : 'Preparing secure audio';
 
-    const markConnected = () => {
-        if (!connectedAtRef.current) connectedAtRef.current = Date.now();
-        setIsConnected(true);
-        if (isRingtonePlayingRef.current) {
-            InCallManager.stopRingtone();
-            isRingtonePlayingRef.current = false;
+
+
+    const startCustomRingback = () => {
+        try {
+            InCallManager.startRingback('_BUNDLE_');
+            isRingtonePlayingRef.current = true;
+            console.log('[AudioCallScreen] Ringback started ✅');
+        } catch (e) {
+            console.log('[AudioCallScreen] Ringback error:', e.message);
         }
-        if (!isOnHold) setStatus('Connected');
     };
+
+    const stopCustomRingback = () => {
+        try {
+            InCallManager.stopRingback();
+            console.log('[AudioCallScreen] Ringback stopped ✅');
+        } catch (e) {
+            console.log('[AudioCallScreen] stopRingback error:', e.message);
+        }
+    };
+
+    const markConnected = () => {
+        // ✅ Always update status
+        setStatus('Connected');
+
+        // ✅ Stop ringback (caller) or ringtone (receiver)
+        stopCallTones();
+        isRingtonePlayingRef.current = false;
+        console.log('[AudioCallScreen] Tones stopped — call connected ✅');
+
+        if (!connectedAtRef.current) {
+            connectedAtRef.current = Date.now();
+            setIsConnected(true);
+            InCallManager.stop();
+            InCallManager.start({ media: 'audio' });
+            InCallManager.setForceSpeakerphoneOn(false); // earpiece by default
+            console.log('[AudioCallScreen] markConnected ✅');
+        }
+    };
+
+    useEffect(() => {
+        const loadCurrentUserId = async () => {
+            try {
+                const value = await AsyncStorage.getItem('current_user_id');
+                if (value) currentUserIdRef.current = String(value);
+            } catch { }
+        };
+        loadCurrentUserId();
+    }, []);
 
     useEffect(() => {
         if (!isConnected) return undefined;
@@ -138,9 +184,13 @@ const AudioCallScreen = ({ route, navigation }) => {
             return undefined;
         }
 
-        webrtcService.onRemoteStream = (stream) => {
+        // ✅ reset mounted flag every time effect runs
+        isMountedRef.current = true;
+
+        webrtcService.onRemoteStream = () => {
             console.log('[AudioCallScreen] Remote stream arrived ✅');
             markConnected();
+            setStatus('Connected'); // ✅ guarantee status on receiver side
         };
 
         webrtcService.onConnectionState = (state) => {
@@ -152,9 +202,9 @@ const AudioCallScreen = ({ route, navigation }) => {
                     disconnectTimeoutRef.current = null;
                 }
                 markConnected();
+                setStatus('Connected'); // ✅ force status even if markConnected guard blocks
             }
 
-            // Give transient disconnects a moment to recover before ending the call.
             if (state === 'disconnected') {
                 if (disconnectTimeoutRef.current) return;
                 disconnectTimeoutRef.current = setTimeout(() => {
@@ -167,106 +217,28 @@ const AudioCallScreen = ({ route, navigation }) => {
                 return;
             }
 
-            if (disconnectTimeoutRef.current) {
-                clearTimeout(disconnectTimeoutRef.current);
-                disconnectTimeoutRef.current = null;
+            if (state === 'completed') {
+                if (disconnectTimeoutRef.current) {
+                    clearTimeout(disconnectTimeoutRef.current);
+                    disconnectTimeoutRef.current = null;
+                }
+                setStatus('Connected'); // ✅ 'completed' also means fully connected
+                markConnected();
             }
 
-            if (state === 'closed' || state === 'failed') {
-                console.log('[AudioCallScreen] Remote disconnected/failed — ending call');
+            if (state === 'failed' || state === 'closed') {
+                console.log('[AudioCallScreen] Connection failed/closed — ending call');
                 handleRemoteEndCall();
             }
         };
 
         startCall();
 
-        // polling every 3s
-        // intervalRef.current = setInterval(async () => {
-        //     try {
-        //         const statusRes = await chatService.getCallStatus(roomId);
-
-        //         const callAge = Date.now() - callStartTime.current;
-        //         const callStatus = statusRes?.data?.status;
-
-        //         if (callStatus === 'ended' && !hasEndedCall.current && callAge > 15000) {
-        //             console.log('[AudioCallScreen] Remote ended call');
-        //             handleRemoteEndCall();
-        //             return;
-        //         }
-
-        //         if (isCaller) {
-        //             // caller waits for answer
-        //             if (!hasSetRemoteAnswer.current) {
-        //                 const res = await chatService.getCallAnswer(roomId);
-        //                 const answer = normalizeSessionDescription(res?.data, 'answer');
-
-        //                 if (answer) {
-        //                     await webrtcService.setRemoteAnswer(answer);
-        //                     hasSetRemoteAnswer.current = true;
-        //                     setStatus('Connected ✓');
-        //                 }
-        //             }
-        //         } else {
-        //             // receiver waits for offer
-        //             // RECEIVER (Device B)
-        //             if (!hasAnswered.current) {
-        //                 const res = await chatService.getCallOffer(roomId);
-        //                 const offer = normalizeSessionDescription(res?.data, 'offer');
-
-        //                 console.log('[AudioCallScreen] offer resolved:', offer?.type, '| sdp length:', offer?.sdp?.length);
-
-        //                 if (offer?.type && offer?.sdp) {
-        //                     try {
-        //                         const answer = await webrtcService.createAnswer(offer);
-
-        //                         if (answer) {
-        //                             // ✅ single send — only here, NOT inside webrtcService
-        //                             await chatService.sendCallAnswer({
-        //                                 room_id: roomId,
-        //                                 answer,
-        //                             });
-
-        //                             hasAnswered.current = true;
-        //                             setStatus('Connected ✓');
-
-        //                             // ✅ safety flush after answer is sent
-        //                             await webrtcService.flushPendingIceCandidates();
-        //                         }
-        //                     } catch (answerError) {
-        //                         console.log('[AudioCallScreen] createAnswer failed:', answerError?.message);
-        //                         const sigState = webrtcService.pc?.signalingState;
-        //                         if (sigState && sigState !== 'stable' && sigState !== 'closed') {
-        //                             await webrtcService.init(roomId);
-        //                         }
-        //                     }
-        //                 } else {
-        //                     console.log('[AudioCallScreen] offer not ready yet — waiting...');
-        //                 }
-        //             }
-        //         }
-
-        //         // ICE
-        //         const iceRes = await chatService.getIceCandidates(roomId);
-        //         const candidates = iceRes?.data?.candidates || [];
-
-        //         candidates.forEach((c, index) => {
-        //             if (!appliedIceCandidates.current.has(index)) {
-        //                 appliedIceCandidates.current.add(index);
-        //                 webrtcService.addIceCandidate(c);
-        //             }
-        //         });
-        //     } catch (e) {
-        //         if (e?.response?.status === 429) {
-        //             console.log('[AudioCallScreen] Rate limited — skipping tick');
-        //             return;
-        //         }
-        //         console.log('[AudioCallScreen] Poll error:', e?.message);
-        //     }
-        // }, 3000);
-
+        // ── Polling: 3 staggered sequential requests per tick ──
+        // 300ms gaps between requests prevent burst 429s.
         intervalRef.current = setInterval(async () => {
             try {
-                // ── Call status check ──
+                // ── Request 1: Call status ──
                 const statusRes = await chatService.getCallStatus(roomId);
                 const callAge = Date.now() - callStartTime.current;
                 const callStatus = statusRes?.data?.status;
@@ -277,26 +249,36 @@ const AudioCallScreen = ({ route, navigation }) => {
                     return;
                 }
 
-                // ── Caller: wait for answer ──
+                // stagger
+                await new Promise(r => setTimeout(r, 300));
+
+                // ── Request 2: Answer (caller) or Offer (receiver) ──
                 if (isCaller && !hasSetRemoteAnswer.current) {
                     const res = await chatService.getCallAnswer(roomId);
                     const answer = normalizeSessionDescription(res?.data, 'answer');
 
                     if (answer) {
-                        console.log('[AudioCallScreen] Answer found via poll ✅ — setting remote answer');
+                        console.log('[AudioCallScreen] Answer found ✅ — setting remote answer');
                         await webrtcService.setRemoteAnswer(answer);
                         hasSetRemoteAnswer.current = true;
-                        console.log('[AudioCallScreen] Remote answer set ✅ — ICE flushing...');
+                        console.log('[AudioCallScreen] Remote answer set ✅');
                     }
                 }
 
-                // ── Receiver: wait for offer, then answer ──
                 if (!isCaller && !hasAnswered.current) {
                     const res = await chatService.getCallOffer(roomId);
                     const offer = normalizeSessionDescription(res?.data, 'offer');
+                    const offerCallerId =
+                        res?.data?.caller_id ??
+                        res?.data?.callerId ??
+                        res?.data?.data?.caller_id;
 
-                    if (offer?.type && offer?.sdp) {
-                        console.log('[AudioCallScreen] Offer ready | type:', offer.type, '| sdp length:', offer.sdp.length);
+                    if (offerCallerId && String(offerCallerId) === String(currentUserIdRef.current)) {
+                        console.log('[AudioCallScreen] Ignored self offer | caller_id:', offerCallerId);
+                        // ✅ FIX (Code 2 bug): do NOT return here — fall through to ICE polling
+                        // Code 2 had a hard `return` here which skipped ICE candidates for that tick
+                    } else if (offer?.type && offer?.sdp) {
+                        console.log('[AudioCallScreen] Offer ready | type:', offer.type, '| sdp:', offer.sdp.length);
                         try {
                             const answer = await webrtcService.createAnswer(offer);
                             if (answer) {
@@ -316,7 +298,10 @@ const AudioCallScreen = ({ route, navigation }) => {
                     }
                 }
 
-                // ── ICE exchange (both sides) ──
+                // stagger
+                await new Promise(r => setTimeout(r, 300));
+
+                // ── Request 3: ICE candidates (both sides) ──
                 const iceRes = await chatService.getIceCandidates(roomId);
                 const candidates = iceRes?.data?.candidates || [];
 
@@ -339,7 +324,7 @@ const AudioCallScreen = ({ route, navigation }) => {
                 }
                 console.log('[AudioCallScreen] Poll error:', e?.message);
             }
-        }, 1500);
+        }, 6000);
 
         const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
             handleEndCall();
@@ -349,25 +334,33 @@ const AudioCallScreen = ({ route, navigation }) => {
         return () => {
             console.log('[AudioCallScreen] Cleanup');
 
+            // mark unmounted FIRST so every in-flight async callback bails out
+            isMountedRef.current = false;
+
             if (intervalRef.current) {
                 clearInterval(intervalRef.current);
                 intervalRef.current = null;
             }
-
             if (disconnectTimeoutRef.current) {
                 clearTimeout(disconnectTimeoutRef.current);
                 disconnectTimeoutRef.current = null;
             }
-
             if (durationIntervalRef.current) {
                 clearInterval(durationIntervalRef.current);
                 durationIntervalRef.current = null;
             }
+            if (callerRetryTimeoutRef.current) {
+                clearTimeout(callerRetryTimeoutRef.current);
+                callerRetryTimeoutRef.current = null;
+            }
 
             backHandler.remove();
-            InCallManager.stopRingtone();
+            stopCallTones();
             isRingtonePlayingRef.current = false;
             InCallManager.stop();
+
+            global.isCallActive = false;
+            global.activeCallType = null;
 
             if (!hasEndedCall.current) {
                 hasEndedCall.current = true;
@@ -378,10 +371,13 @@ const AudioCallScreen = ({ route, navigation }) => {
         };
     }, [isCaller, roomId]);
 
-    // 🔑 FIXED: use startCaller for caller, init only for receiver
+
+
+
     const startCall = async (attempt = 0) => {
+        if (!isMountedRef.current || hasEndedCall.current) return;
+
         try {
-            // ✅ request permissions first
             if (Platform.OS === 'android') {
                 const result = await PermissionsAndroid.request(
                     PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
@@ -392,44 +388,55 @@ const AudioCallScreen = ({ route, navigation }) => {
                         buttonNegative: 'Deny',
                     }
                 );
-
                 if (result !== PermissionsAndroid.RESULTS.GRANTED) {
                     setStatus('Microphone permission denied');
                     return;
                 }
             }
 
-            // ✅ pause message polling during call
             global.isCallActive = true;
             global.activeCallType = 'audio';
-
-            InCallManager.start({ media: 'audio' });
             InCallManager.setKeepScreenOn(true);
-            InCallManager.setForceSpeakerphoneOn(true);
 
             if (isCaller) {
-                InCallManager.startRingtone('_BUNDLE_');
+                // ✅ ringback passed inside start() — this is the correct API
+                InCallManager.start({ media: 'audio', ringback: '_BUNDLE_' });
                 isRingtonePlayingRef.current = true;
+                console.log('[AudioCallScreen] Custom ringback started ✅');
+
                 await webrtcService.startCaller(roomId, userId);
+                if (!isMountedRef.current || hasEndedCall.current) {
+                    stopCallTones();
+                    return;
+                }
+
+                InCallManager.setForceSpeakerphoneOn(isSpeaker);
                 setStatus('Calling...');
             } else {
+                await new Promise(r => setTimeout(r, 300));
+                if (!isMountedRef.current || hasEndedCall.current) return;
+
+                // ✅ NO startRingtone here — IncomingCallScreen already rang before accept
                 await webrtcService.init(roomId);
-                setStatus('Incoming Call...');
+
+                if (!isMountedRef.current || hasEndedCall.current) return;
+                setStatus('Connecting...');
             }
+
         } catch (e) {
             console.log('[AudioCallScreen] startCall error:', e?.message);
-            if (isCaller && e?.response?.status === 429 && attempt < 2) {
-                const retryInMs = 1200 * (attempt + 1);
+            if (isCaller && e?.response?.status === 429 && attempt < 2
+                && isMountedRef.current && !hasEndedCall.current) {
                 setStatus(`Server busy, retrying (${attempt + 1}/2)...`);
                 callerRetryTimeoutRef.current = setTimeout(() => {
                     callerRetryTimeoutRef.current = null;
-                    if (!hasEndedCall.current) startCall(attempt + 1);
-                }, retryInMs);
+                    if (isMountedRef.current && !hasEndedCall.current) startCall(attempt + 1);
+                }, 1200 * (attempt + 1));
                 return;
             }
-            InCallManager.stopRingtone();
+            stopCallTones();
             isRingtonePlayingRef.current = false;
-            setStatus('Connection Failed');
+            if (isMountedRef.current) setStatus('Connection Failed');
         }
     };
 
@@ -437,26 +444,12 @@ const AudioCallScreen = ({ route, navigation }) => {
         if (hasEndedCall.current) return;
         hasEndedCall.current = true;
 
-        if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-        }
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+        if (disconnectTimeoutRef.current) { clearTimeout(disconnectTimeoutRef.current); disconnectTimeoutRef.current = null; }
+        if (durationIntervalRef.current) { clearInterval(durationIntervalRef.current); durationIntervalRef.current = null; }
+        if (callerRetryTimeoutRef.current) { clearTimeout(callerRetryTimeoutRef.current); callerRetryTimeoutRef.current = null; }
 
-        if (disconnectTimeoutRef.current) {
-            clearTimeout(disconnectTimeoutRef.current);
-            disconnectTimeoutRef.current = null;
-        }
-
-        if (durationIntervalRef.current) {
-            clearInterval(durationIntervalRef.current);
-            durationIntervalRef.current = null;
-        }
-        if (callerRetryTimeoutRef.current) {
-            clearTimeout(callerRetryTimeoutRef.current);
-            callerRetryTimeoutRef.current = null;
-        }
-
-        InCallManager.stopRingtone();
+        stopCallTones();
         isRingtonePlayingRef.current = false;
         InCallManager.stop();
         global.isCallActive = false;
@@ -477,26 +470,12 @@ const AudioCallScreen = ({ route, navigation }) => {
         if (hasEndedCall.current) return;
         hasEndedCall.current = true;
 
-        if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-        }
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+        if (disconnectTimeoutRef.current) { clearTimeout(disconnectTimeoutRef.current); disconnectTimeoutRef.current = null; }
+        if (durationIntervalRef.current) { clearInterval(durationIntervalRef.current); durationIntervalRef.current = null; }
+        if (callerRetryTimeoutRef.current) { clearTimeout(callerRetryTimeoutRef.current); callerRetryTimeoutRef.current = null; }
 
-        if (disconnectTimeoutRef.current) {
-            clearTimeout(disconnectTimeoutRef.current);
-            disconnectTimeoutRef.current = null;
-        }
-
-        if (durationIntervalRef.current) {
-            clearInterval(durationIntervalRef.current);
-            durationIntervalRef.current = null;
-        }
-        if (callerRetryTimeoutRef.current) {
-            clearTimeout(callerRetryTimeoutRef.current);
-            callerRetryTimeoutRef.current = null;
-        }
-
-        InCallManager.stopRingtone();
+        stopCallTones();
         isRingtonePlayingRef.current = false;
         InCallManager.stop();
         global.isCallActive = false;
@@ -514,7 +493,6 @@ const AudioCallScreen = ({ route, navigation }) => {
     const toggleMute = () => {
         const tracks = webrtcService.localStream?.getAudioTracks();
         if (!tracks?.length) return;
-
         const newMuted = !isMuted;
         tracks.forEach(t => { t.enabled = !newMuted && !isOnHold; });
         setIsMuted(newMuted);
@@ -523,11 +501,9 @@ const AudioCallScreen = ({ route, navigation }) => {
     const toggleHold = () => {
         const tracks = webrtcService.localStream?.getAudioTracks();
         if (!tracks?.length) return;
-
         const nextHold = !isOnHold;
         tracks.forEach(t => { t.enabled = !nextHold && !isMuted; });
         setIsOnHold(nextHold);
-
         if (nextHold) {
             setStatus('On Hold');
         } else if (isConnected) {
@@ -618,216 +594,45 @@ const AudioCallScreen = ({ route, navigation }) => {
             </View>
         </SafeAreaView>
     );
-
 };
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#0B0F14',
-        paddingHorizontal: 24,
-        paddingBottom: 24,
-    },
-    topBar: {
-        minHeight: 76,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    statusPill: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        minHeight: 34,
-        paddingHorizontal: 14,
-        borderRadius: 18,
-        borderWidth: 1,
-    },
-    statusPill_connecting: {
-        backgroundColor: 'rgba(245, 158, 11, 0.12)',
-        borderColor: 'rgba(245, 158, 11, 0.32)',
-    },
-    statusPill_ongoing: {
-        backgroundColor: 'rgba(34, 197, 94, 0.12)',
-        borderColor: 'rgba(34, 197, 94, 0.32)',
-    },
-    statusPill_hold: {
-        backgroundColor: 'rgba(59, 130, 246, 0.12)',
-        borderColor: 'rgba(59, 130, 246, 0.32)',
-    },
-    statusPill_ended: {
-        backgroundColor: 'rgba(239, 68, 68, 0.12)',
-        borderColor: 'rgba(239, 68, 68, 0.32)',
-    },
-    statusDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        marginRight: 8,
-    },
-    statusDot_connecting: {
-        backgroundColor: '#F59E0B',
-    },
-    statusDot_ongoing: {
-        backgroundColor: '#22C55E',
-    },
-    statusDot_hold: {
-        backgroundColor: '#3B82F6',
-    },
-    statusDot_ended: {
-        backgroundColor: '#EF4444',
-    },
-    statusPillText: {
-        color: '#F8FAFC',
-        fontSize: 13,
-        fontWeight: '700',
-    },
-    identitySection: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingBottom: 16,
-    },
-    avatarRing: {
-        width: 152,
-        height: 152,
-        borderRadius: 76,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.12)',
-        backgroundColor: 'rgba(255,255,255,0.06)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 28,
-    },
-    avatarRingCompact: {
-        width: 124,
-        height: 124,
-        borderRadius: 62,
-        marginBottom: 20,
-    },
-    avatarRingLive: {
-        borderColor: 'rgba(34,197,94,0.55)',
-        backgroundColor: 'rgba(34,197,94,0.08)',
-    },
-    avatarRingHold: {
-        borderColor: 'rgba(59,130,246,0.52)',
-        backgroundColor: 'rgba(59,130,246,0.08)',
-    },
-    avatar: {
-        width: 118,
-        height: 118,
-        borderRadius: 59,
-        backgroundColor: '#17212B',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    avatarCompact: {
-        width: 96,
-        height: 96,
-        borderRadius: 48,
-    },
-    avatarInitial: {
-        color: '#F8FAFC',
-        fontSize: 44,
-        fontWeight: '800',
-    },
-    avatarInitialCompact: {
-        fontSize: 36,
-    },
-    callerName: {
-        color: '#F8FAFC',
-        fontSize: 30,
-        fontWeight: '800',
-        maxWidth: '92%',
-        textAlign: 'center',
-        marginBottom: 8,
-    },
-    callerNameCompact: {
-        fontSize: 24,
-    },
-    callMeta: {
-        color: '#AAB6C2',
-        fontSize: 15,
-        fontWeight: '600',
-        marginBottom: 18,
-    },
-    roomBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: 12,
-        paddingVertical: 7,
-        borderRadius: 16,
-        backgroundColor: 'rgba(134,239,172,0.08)',
-        borderWidth: 1,
-        borderColor: 'rgba(134,239,172,0.18)',
-    },
-    roomBadgeText: {
-        color: '#C8D3DD',
-        fontSize: 12,
-        fontWeight: '700',
-    },
-    controlsPanel: {
-        width: '100%',
-        alignItems: 'center',
-        paddingTop: 18,
-        borderTopWidth: 1,
-        borderTopColor: 'rgba(255,255,255,0.08)',
-    },
-    controlsGrid: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        width: '100%',
-        maxWidth: 390,
-        marginBottom: 22,
-    },
-    controlButton: {
-        width: 96,
-        minHeight: 80,
-        borderRadius: 24,
-        backgroundColor: '#161D25',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.08)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 7,
-    },
-    controlButtonCompact: {
-        width: 86,
-        minHeight: 72,
-        borderRadius: 20,
-    },
-    controlButtonActive: {
-        backgroundColor: '#1F7A5C',
-        borderColor: 'rgba(255,255,255,0.18)',
-    },
-    controlText: {
-        color: '#C8D3DD',
-        fontSize: 12,
-        fontWeight: '700',
-        textAlign: 'center',
-    },
-    controlTextActive: {
-        color: '#FFFFFF',
-    },
-    endCallButton: {
-        width: 74,
-        height: 74,
-        borderRadius: 37,
-        backgroundColor: '#E11D48',
-        justifyContent: 'center',
-        alignItems: 'center',
-        shadowColor: '#E11D48',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.35,
-        shadowRadius: 18,
-        elevation: 8,
-    },
-    endCallButtonCompact: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
-    },
+    container: { flex: 1, backgroundColor: '#0B0F14', paddingHorizontal: 24, paddingBottom: 24 },
+    topBar: { minHeight: 76, justifyContent: 'center', alignItems: 'center' },
+    statusPill: { flexDirection: 'row', alignItems: 'center', minHeight: 34, paddingHorizontal: 14, borderRadius: 18, borderWidth: 1 },
+    statusPill_connecting: { backgroundColor: 'rgba(245, 158, 11, 0.12)', borderColor: 'rgba(245, 158, 11, 0.32)' },
+    statusPill_ongoing: { backgroundColor: 'rgba(34, 197, 94, 0.12)', borderColor: 'rgba(34, 197, 94, 0.32)' },
+    statusPill_hold: { backgroundColor: 'rgba(59, 130, 246, 0.12)', borderColor: 'rgba(59, 130, 246, 0.32)' },
+    statusPill_ended: { backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.32)' },
+    statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
+    statusDot_connecting: { backgroundColor: '#F59E0B' },
+    statusDot_ongoing: { backgroundColor: '#22C55E' },
+    statusDot_hold: { backgroundColor: '#3B82F6' },
+    statusDot_ended: { backgroundColor: '#EF4444' },
+    statusPillText: { color: '#F8FAFC', fontSize: 13, fontWeight: '700' },
+    identitySection: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: 16 },
+    avatarRing: { width: 152, height: 152, borderRadius: 76, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', justifyContent: 'center', alignItems: 'center', marginBottom: 28 },
+    avatarRingCompact: { width: 124, height: 124, borderRadius: 62, marginBottom: 20 },
+    avatarRingLive: { borderColor: 'rgba(34,197,94,0.55)', backgroundColor: 'rgba(34,197,94,0.08)' },
+    avatarRingHold: { borderColor: 'rgba(59,130,246,0.52)', backgroundColor: 'rgba(59,130,246,0.08)' },
+    avatar: { width: 118, height: 118, borderRadius: 59, backgroundColor: '#17212B', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
+    avatarCompact: { width: 96, height: 96, borderRadius: 48 },
+    avatarInitial: { color: '#F8FAFC', fontSize: 44, fontWeight: '800' },
+    avatarInitialCompact: { fontSize: 36 },
+    callerName: { color: '#F8FAFC', fontSize: 30, fontWeight: '800', maxWidth: '92%', textAlign: 'center', marginBottom: 8 },
+    callerNameCompact: { fontSize: 24 },
+    callMeta: { color: '#AAB6C2', fontSize: 15, fontWeight: '600', marginBottom: 18 },
+    roomBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: 'rgba(134,239,172,0.08)', borderWidth: 1, borderColor: 'rgba(134,239,172,0.18)' },
+    roomBadgeText: { color: '#C8D3DD', fontSize: 12, fontWeight: '700' },
+    controlsPanel: { width: '100%', alignItems: 'center', paddingTop: 18, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' },
+    controlsGrid: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', maxWidth: 390, marginBottom: 22 },
+    controlButton: { width: 96, minHeight: 80, borderRadius: 24, backgroundColor: '#161D25', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center', gap: 7 },
+    controlButtonCompact: { width: 86, minHeight: 72, borderRadius: 20 },
+    controlButtonActive: { backgroundColor: '#1F7A5C', borderColor: 'rgba(255,255,255,0.18)' },
+    controlText: { color: '#C8D3DD', fontSize: 12, fontWeight: '700', textAlign: 'center' },
+    controlTextActive: { color: '#FFFFFF' },
+    endCallButton: { width: 74, height: 74, borderRadius: 37, backgroundColor: '#E11D48', justifyContent: 'center', alignItems: 'center', shadowColor: '#E11D48', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.35, shadowRadius: 18, elevation: 8 },
+    endCallButtonCompact: { width: 64, height: 64, borderRadius: 32 },
 });
 
 export default AudioCallScreen;

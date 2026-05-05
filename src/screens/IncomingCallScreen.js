@@ -16,6 +16,8 @@ const IncomingCallScreen = ({ route, navigation }) => {
   const hasActed = useRef(false);
 
   useEffect(() => {
+    // ✅ Force earpiece (not speaker) for incoming call
+    InCallManager.setForceSpeakerphoneOn(false);
     InCallManager.startRingtone('_BUNDLE_');
     Vibration.vibrate([0, 1000, 500, 1000, 500, 1000], true);
 
@@ -38,12 +40,14 @@ const IncomingCallScreen = ({ route, navigation }) => {
 
     console.log('[IncomingCallScreen] Call accepted | roomId:', roomId, '| callerId:', callerId);
 
+    // ✅ Stop ring immediately before navigating
     InCallManager.stopRingtone();
     Vibration.cancel();
 
     try {
-      await AsyncStorage.setItem('call_just_ended', 'true'); // ✅ prevent listener conflict
-    } catch (e) {}
+      await AsyncStorage.setItem('call_just_ended', 'true');
+    } catch (e) { }
+
     global.activeCallType = 'audio';
     global.isCallActive = true;
 

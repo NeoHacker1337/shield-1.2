@@ -4,18 +4,18 @@ import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import chatService from '../services/chatService';
 
-const POLL_INTERVAL = 1500;
+const POLL_INTERVAL = 6000;
 const ROOM_REFRESH_INTERVAL = 15000;
 
 let cachedRoomIds = new Set();
 let lastRoomFetch = 0;
 
 const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId }) => {
-  const intervalRef   = useRef(null);
-  const isNavigating  = useRef(false);
+  const intervalRef = useRef(null);
+  const isNavigating = useRef(false);
   const activeRoomRef = useRef(activeRoomId);
-  const userIdRef     = useRef(currentUserId);
-  const isMountedRef  = useRef(true);
+  const userIdRef = useRef(currentUserId);
+  const isMountedRef = useRef(true);
   const roomCursorRef = useRef(0);
 
   // FIX #1: Keep refs in sync so pollTick always reads fresh values
@@ -57,7 +57,7 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
           const ids = JSON.parse(stored);
           if (Array.isArray(ids)) ids.forEach(id => cachedRoomIds.add(String(id)));
         }
-      } catch {}
+      } catch { }
     }
   }, []);
 
@@ -120,10 +120,12 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
         try {
           const statusRes = await chatService.getVideoCallStatus(roomId);
           const callStatus = statusRes?.data?.status;
+
+          const callerName = statusRes?.data?.caller_name ?? 'Unknown';
           if (callStatus !== 'active') continue;
 
           const res = await chatService.getVideoCallOffer(roomId);
-          const offer    = res?.data?.offer;
+          const offer = res?.data?.offer;
           const callerId = res?.data?.caller_id ?? res?.data?.callerId ?? res?.data?.user_id;
 
           if (!offer) continue;
@@ -141,7 +143,7 @@ const useGlobalVideoCallListener = ({ navigationRef, currentUserId, activeRoomId
           nav.navigate('IncomingVideoCallScreen', {
             roomId,
             callerId,
-            callerName: 'Incoming Video Call',
+            callerName, 
           });
 
           setTimeout(() => {

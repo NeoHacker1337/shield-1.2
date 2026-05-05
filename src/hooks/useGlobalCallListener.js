@@ -4,19 +4,19 @@ import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import chatService from '../services/chatService';
 
-const POLL_INTERVAL = 1500;
+const POLL_INTERVAL = 6000;
 
 let _cachedRoomIds = new Set();
 let _lastRoomFetch = 0;
 const ROOM_REFRESH_INTERVAL = 15000;
 
 const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) => {
-  const intervalRef   = useRef(null);
-  const isNavigating  = useRef(false);
-  const appStateRef   = useRef(AppState.currentState);
+  const intervalRef = useRef(null);
+  const isNavigating = useRef(false);
+  const appStateRef = useRef(AppState.currentState);
   const activeRoomRef = useRef(activeRoomId);
-  const userIdRef     = useRef(currentUserId);
-  const isMountedRef  = useRef(true);
+  const userIdRef = useRef(currentUserId);
+  const isMountedRef = useRef(true);
   const roomCursorRef = useRef(0);
 
   // FIX #1: Keep refs in sync so pollTick always reads fresh values
@@ -80,7 +80,11 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
       }
 
       if (isNavigating.current) return;
-      if (global.isCallActive && global.activeCallType === 'video') return;
+      // FIX: suppress polling for ANY active call (audio or video), not just video.
+      // Without this guard, Device A (the caller) was still polling while its own
+      // audio call was in progress, detected its own offer, and navigated to
+      // IncomingCall — causing it to hear its own ringtone.
+      if (global.isCallActive) return;
 
       // FIX #1: Always read from ref — never stale even if prop was null on mount
       const userId = userIdRef.current;
@@ -117,29 +121,31 @@ const useGlobalCallListener = ({ navigationRef, currentUserId, activeRoomId }) =
 
         try {
           const statusRes = await chatService.getCallStatus(roomId);
+
           const callStatus = statusRes?.data?.status;
           if (callStatus !== 'active') continue;
 
+          // ✅ Pull caller_name from statusRes here
+          const callerName = statusRes?.data?.caller_name ?? 'Unknown';
+
           const res = await chatService.getCallOffer(roomId);
-          const offer    = res?.data?.offer;
+          const offer = res?.data?.offer;
           const callerId = res?.data?.caller_id ?? res?.data?.callerId ?? res?.data?.user_id;
 
           if (!offer) continue;
 
-          // FIX #2: Skip calls initiated by the current user themselves
           if (callerId && String(callerId) === String(userIdRef.current)) {
-            console.log('[GlobalCallListener] Skipping own outgoing call in room:', roomId);
+            console.log('GlobalCallListener: Skipping own outgoing call in room', roomId);
             continue;
           }
 
-          console.log('[GlobalCallListener] 📞 Incoming call | room:', roomId, '| caller:', callerId);
-
           isNavigating.current = true;
+          global.isCallActive = true;
           global.activeCallType = 'audio';
 
           nav.navigate('IncomingCall', {
             roomId,
-            callerName: 'Incoming Call',
+            callerName,  // ✅ now correctly "Test User"
             callerId,
           });
 

@@ -23,67 +23,86 @@ const configuration = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+
         {
-            urls:       'turn:openrelay.metered.ca:80',
-            username:   'openrelayproject',
-            credential: 'openrelayproject',
+            urls: 'turn:standard.relay.metered.ca:80',
+            username: 'e84571c40a30c4765da8cddb',
+            credential: 'uMrSWdKJ+MHobRAH',
         },
         {
-            urls:       'turn:openrelay.metered.ca:443',
-            username:   'openrelayproject',
-            credential: 'openrelayproject',
+            urls: 'turn:standard.relay.metered.ca:80?transport=tcp',
+            username: 'e84571c40a30c4765da8cddb',
+            credential: 'uMrSWdKJ+MHobRAH',
         },
         {
-            urls:       'turns:openrelay.metered.ca:443',
-            username:   'openrelayproject',
-            credential: 'openrelayproject',
+            urls: 'turn:standard.relay.metered.ca:443',
+            username: 'e84571c40a30c4765da8cddb',
+            credential: 'uMrSWdKJ+MHobRAH',
+        },
+        {
+            urls: 'turns:standard.relay.metered.ca:443?transport=tcp',
+            username: 'e84571c40a30c4765da8cddb',
+            credential: 'uMrSWdKJ+MHobRAH',
         },
     ],
+    iceCandidatePoolSize: 10,
 };
 
 class WebRTCVideoService {
     constructor() {
-        this.pc                   = null;
-        this.localStream          = null;
-        this.remoteStream         = null;
+        this.pc = null;
+        this.localStream = null;
+        this.remoteStream = null;
         this.pendingIceCandidates = [];
-        this.currentRoomId        = null;
-        this.onRemoteStream       = null;
-        this.onLocalStream        = null;
-        this.onConnectionState    = null;
-        this._remoteDescSet       = false;
-        this._answerInProgress    = false;
-        this._isFrontCamera       = true;
+        this.currentRoomId = null;
+        this.onRemoteStream = null;
+        this.onLocalStream = null;
+        this.onConnectionState = null;
+        this._remoteDescSet = false;
+        this._answerInProgress = false;
+        this._isFrontCamera = true;
     }
 
-    // ─────────────────────────────────────────────
-    // INIT
-    // ─────────────────────────────────────────────
     async init(roomId) {
         if (this.pc) {
             console.log('[VideoService] Closing existing PC before reinit');
             this._cleanupPC();
         }
 
-        this.currentRoomId        = roomId;
+        this.currentRoomId = roomId;
         this.pendingIceCandidates = [];
-        this._remoteDescSet       = false;
-        this._answerInProgress    = false;
-        this._isFrontCamera       = true;
+        this._remoteDescSet = false;
+        this._answerInProgress = false;
+        this._isFrontCamera = true;
 
-        this.pc = new RTCPeerConnection(configuration);
+        // 🔥 PATCH: allow relay debug (no removal of original behavior)
+        this.pc = new RTCPeerConnection({
+            ...configuration,
+            iceTransportPolicy: 'all',
+        });
+
         console.log('[VideoService] PC created | signalingState:', this.pc.signalingState);
 
-        // ICE — send to server immediately
+        // 🔥 PATCH: TURN reachability test (ADDED ONLY)
+        this._testTurnReachability();
+
         this.pc.onicecandidate = (event) => {
             if (event.candidate && this.currentRoomId) {
+
+                // 🔥 PATCH: ICE TYPE LOGGING (ADDED)
+                const raw = event.candidate.candidate ?? '';
+                const typeMatch = raw.match(/typ\s+(\w+)/);
+                const type = typeMatch?.[1] ?? 'unknown';
+                console.log(`[Video ICE] type: ${type}`);
+
                 const candidate = typeof event.candidate.toJSON === 'function'
                     ? event.candidate.toJSON()
                     : event.candidate;
 
                 console.log('[VideoService] ICE candidate generated | room:', this.currentRoomId);
+
                 chatService.sendVideoIceCandidate({
-                    room_id:   this.currentRoomId,
+                    room_id: this.currentRoomId,
                     candidate,
                 }).catch(e => {
                     console.log('[VideoService] send ICE error:', e?.message);
@@ -91,7 +110,6 @@ class WebRTCVideoService {
             }
         };
 
-        // Remote track received
         this.pc.ontrack = (event) => {
             this.remoteStream = event.streams[0];
             console.log('[VideoService] Remote stream received ✅ | tracks:', this.remoteStream?.getTracks()?.length);
@@ -117,28 +135,69 @@ class WebRTCVideoService {
         this.pc.onicegatheringstatechange = () =>
             console.log('[VideoService] iceGatheringState →', this.pc?.iceGatheringState);
 
-        // Request audio + video stream
-        this.localStream = await mediaDevices.getUserMedia({
-            audio: true,
-            video: {
-                facingMode: 'user',
-                width:  { ideal: 1280 },
-                height: { ideal: 720 },
-            },
-        });
+        // 🔥 PATCH: SAFE CAMERA INIT (wrapped only)
+        try {
+            this.localStream = await mediaDevices.getUserMedia({
+                audio: true,
+                video: {
+                    facingMode: 'user',
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                },
+            });
+        } catch (e) {
+            console.error('[VideoService] getUserMedia failed:', e);
+            throw e;
+        }
 
         this.localStream.getTracks().forEach(track => {
             this.pc.addTrack(track, this.localStream);
             console.log('[VideoService] Local track added:', track.kind);
         });
 
-        // Notify screen to display local stream
         if (typeof this.onLocalStream === 'function') {
             this.onLocalStream(this.localStream);
         }
 
+        // 🔥 PATCH: BITRATE CONTROL (ADDED ONLY)
+        this.pc.getSenders().forEach(sender => {
+            if (sender.track?.kind === 'video') {
+                const params = sender.getParameters();
+                if (!params.encodings) params.encodings = [{}];
+
+                params.encodings[0].maxBitrate = 1500000;
+                sender.setParameters(params);
+            }
+        });
+
         console.log('[VideoService] init() complete | roomId:', roomId);
     }
+
+    _testTurnReachability() {
+        const testPC = new RTCPeerConnection(configuration);
+        testPC.createDataChannel('turn-test');
+
+        testPC.createOffer()
+            .then(offer => testPC.setLocalDescription(offer))
+            .catch(() => { });
+
+        testPC.onicecandidate = (e) => {
+            if (e.candidate) {
+                const raw = e.candidate.candidate ?? '';
+                const typeMatch = raw.match(/typ\s+(\w+)/);
+                const type = typeMatch?.[1] ?? 'unknown';
+
+                console.log(`[VIDEO TURN TEST] type: ${type}`);
+
+                if (type === 'relay') {
+                    console.log('[VIDEO TURN TEST] ✅ TURN working');
+                }
+            }
+        };
+
+        setTimeout(() => testPC.close(), 8000);
+    }
+
 
     // ─────────────────────────────────────────────
     // CALLER — Device A
@@ -158,9 +217,9 @@ class WebRTCVideoService {
         const offerPayload = { type: offer.type, sdp: offer.sdp };
 
         await chatService.sendVideoCallOffer({
-            room_id:   roomId,
+            room_id: roomId,
             caller_id: callerId,
-            offer:     offerPayload,
+            offer: offerPayload,
         });
 
         console.log('[VideoService] Video offer sent to server ✅');
@@ -189,7 +248,7 @@ class WebRTCVideoService {
 
             // Normalize offer shape
             let sdpData = offer;
-            if (offer?.offer)                                     sdpData = offer.offer;
+            if (offer?.offer) sdpData = offer.offer;
             else if (offer?.sdp && typeof offer.sdp === 'object') sdpData = offer.sdp;
 
             console.log('[VideoService] sdpData.type:', sdpData?.type);
@@ -222,7 +281,7 @@ class WebRTCVideoService {
             // ✅ Send answer once — here only, NOT in VideoCallScreen
             await chatService.sendVideoCallAnswer({
                 room_id: this.currentRoomId,
-                answer:  answerPayload,
+                answer: answerPayload,
             });
             console.log('[VideoService] Answer sent to server ✅');
 
@@ -280,7 +339,7 @@ class WebRTCVideoService {
         console.log('[VideoService] setRemoteAnswer | signalingState:', this.pc.signalingState);
 
         let sdpData = answer;
-        if (answer?.answer)                                   sdpData = answer.answer;
+        if (answer?.answer) sdpData = answer.answer;
         else if (answer?.sdp && typeof answer.sdp === 'object') sdpData = answer.sdp;
 
         if (!sdpData?.type || !sdpData?.sdp) {
@@ -391,11 +450,11 @@ class WebRTCVideoService {
     // ─────────────────────────────────────────────
     _cleanupPC() {
         this.pc?.close();
-        this.pc                   = null;
-        this.remoteStream         = null;
+        this.pc = null;
+        this.remoteStream = null;
         this.pendingIceCandidates = [];
-        this._remoteDescSet       = false;
-        this._answerInProgress    = false;
+        this._remoteDescSet = false;
+        this._answerInProgress = false;
     }
 
     close() {
@@ -408,10 +467,10 @@ class WebRTCVideoService {
 
         this._cleanupPC();
 
-        this.localStream       = null;
-        this.currentRoomId     = null;
-        this.onRemoteStream    = null;
-        this.onLocalStream     = null;
+        this.localStream = null;
+        this.currentRoomId = null;
+        this.onRemoteStream = null;
+        this.onLocalStream = null;
         this.onConnectionState = null;
 
         console.log('[VideoService] Closed ✅');

@@ -245,9 +245,13 @@ const useMessages = ({ chatRoom, currentUser, navigation }) => {
         if (error?.response?.status === 429) {
           poll429CountRef.current += 1;
           const retryAfterMs = parseRetryAfterMs(error?.response?.headers?.['retry-after']);
+
+
           const exponentialMs = Math.min(MAX_POLL_BACKOFF_MS, 2000 * (2 ** (poll429CountRef.current - 1)));
           const backoffMs = Math.min(MAX_POLL_BACKOFF_MS, Math.max(retryAfterMs, exponentialMs));
           pollBackoffUntilRef.current = Date.now() + backoffMs;
+
+          
           // Keep current messages on screen; don't surface as hard error.
           if (__DEV__) {
             console.log(
