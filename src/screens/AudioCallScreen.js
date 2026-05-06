@@ -118,8 +118,8 @@ const AudioCallScreen = ({ route, navigation }) => {
     const callMeta = isConnected
         ? formatDuration(durationSeconds)
         : isCaller
-        ? 'Waiting for answer'
-        : 'Preparing secure audio';
+            ? 'Waiting for answer'
+            : 'Preparing secure audio';
 
     // ─────────────────────────────────────────────
     // CONTROLS AUTO-HIDE
@@ -368,7 +368,9 @@ const AudioCallScreen = ({ route, navigation }) => {
                     return;
                 }
 
-                await new Promise(r => setTimeout(r, 300));
+                // ✅ REMOVED: await new Promise(r => setTimeout(r, 300));
+                // 429 rate limit is already handled gracefully in the catch block below.
+                // This artificial delay was adding 300ms to every single poll tick unnecessarily.
 
                 // CALLER — wait for answer
                 if (isCaller && !hasSetRemoteAnswer.current) {
@@ -488,10 +490,6 @@ const AudioCallScreen = ({ route, navigation }) => {
             global.activeCallType = 'audio';
             InCallManager.setKeepScreenOn(true);
 
-            // ✅ Issue 4 FIX: Do NOT call setForceSpeakerphoneOn here
-            // It will be applied in markConnected() AFTER WebRTC is fully ready
-            // This prevents InCallManager from grabbing audio route before WebRTC track is active
-
             if (isCaller) {
                 InCallManager.start({ media: 'audio', ringback: '_BUNDLE_' });
                 isRingtonePlayingRef.current = true;
@@ -505,7 +503,9 @@ const AudioCallScreen = ({ route, navigation }) => {
 
                 setStatus('Calling...');
             } else {
-                await new Promise(r => setTimeout(r, 300));
+                // ✅ REMOVED: await new Promise(r => setTimeout(r, 300));
+                // webrtcService.init() fetches TURN credentials (~500ms) which
+                // naturally handles any race condition — no artificial delay needed.
                 if (!isMountedRef.current || hasEndedCall.current) return;
 
                 await webrtcService.init(roomId);

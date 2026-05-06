@@ -196,6 +196,9 @@ const chatService = {
     return api.get('/v1/video-call/turn-credentials');
   },
 
+  getAudioTurnCredentials() {
+    return apiClient.get('/call/turn-credentials');
+  },
 
 };
 

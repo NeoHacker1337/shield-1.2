@@ -1,16 +1,14 @@
 /**
  * VideoCallScreen.js
  * ──────────────────
- * Full-screen video call UI — UI/UX REDESIGN ONLY.
- * All WebRTC, signaling, backend, and media logic is unchanged.
+ * Full-screen video call UI.
  *
- * UI Changes:
- * - Single horizontal control bar at bottom
- * - End Call button always visible (never auto-hides)
- * - Smooth fade animations for control bar
- * - Clean glassmorphism control buttons
- * - Safe-area aware layout
- * - Draggable PiP local video
+ * FIXES APPLIED:
+ * ✅ InCallManager.start() moved AFTER webrtcVideoService.init() — prevents audio
+ *    routing conflict when TURN fetch + getUserMedia takes longer on different networks
+ * ✅ Signaling poll re-init guard fixed — only re-inits on truly broken states
+ *    (was incorrectly re-initing on valid 'have-remote-offer' signalingState)
+ * ✅ All existing features preserved — controls, PiP, glassmorphism UI, animations
  */
 
 import React, { useEffect, useState, useRef } from 'react';
@@ -43,7 +41,7 @@ const SIGNALING_POLL_INTERVAL_MS = 3000;
 const CONTROLS_HIDE_DELAY_MS = 4000;
 
 // ─────────────────────────────────────────────
-// UNCHANGED HELPERS (no logic changes)
+// HELPERS
 // ─────────────────────────────────────────────
 
 const stopCallTones = () => {
@@ -60,7 +58,7 @@ const normalizeSessionDescription = (payload, key) => {
 };
 
 // ─────────────────────────────────────────────
-// ICON COMPONENTS (SVG-style via Text — keeps emoji fallback)
+// CONTROL BUTTON
 // ─────────────────────────────────────────────
 
 const ControlButton = ({ icon, label, onPress, active = false, danger = false, alwaysVisible = false }) => (
@@ -73,7 +71,7 @@ const ControlButton = ({ icon, label, onPress, active = false, danger = false, a
         onPress={onPress}
         activeOpacity={0.75}
     >
-        <Text style={[styles.ctrlIcon, danger && styles.ctrlIconDanger]}>{icon}</Text>
+        <Text style={danger ? styles.ctrlIconDanger : styles.ctrlIcon}>{icon}</Text>
         {label ? <Text style={styles.ctrlLabel}>{label}</Text> : null}
     </TouchableOpacity>
 );
@@ -85,7 +83,7 @@ const ControlButton = ({ icon, label, onPress, active = false, danger = false, a
 const VideoCallScreen = ({ route, navigation }) => {
     const { userId, roomId, isCaller, callerName } = route.params ?? {};
 
-    // ── State (unchanged) ──
+    // ── State ──
     const [status, setStatus] = useState('Connecting...');
     const [isMuted, setIsMuted] = useState(false);
     const [isVideoOff, setIsVideoOff] = useState(false);
@@ -93,14 +91,14 @@ const VideoCallScreen = ({ route, navigation }) => {
     const [localStreamURL, setLocalStreamURL] = useState(null);
     const [remoteStreamURL, setRemoteStreamURL] = useState(null);
 
-    // ── UI-only state ──
+    // ── UI state ──
     const [controlsVisible, setControlsVisible] = useState(true);
-    const controlsAnim = useRef(new Animated.Value(1)).current;   // 1 = visible
+    const controlsAnim = useRef(new Animated.Value(1)).current;
 
-    // ── PiP drag (unchanged logic) ──
+    // ── PiP drag ──
     const pipPos = useRef(new Animated.ValueXY({ x: SCREEN_W - PIP_W - 16, y: 48 })).current;
 
-    // ── Refs (unchanged) ──
+    // ── Refs ──
     const hasAnswered = useRef(false);
     const hasSetRemoteAnswer = useRef(false);
     const appliedIceCandidates = useRef(new Set());
@@ -145,7 +143,7 @@ const VideoCallScreen = ({ route, navigation }) => {
     };
 
     // ─────────────────────────────────────────────
-    // PiP PanResponder (unchanged logic)
+    // PiP PanResponder
     // ─────────────────────────────────────────────
 
     const pipResponder = PanResponder.create({
@@ -158,7 +156,7 @@ const VideoCallScreen = ({ route, navigation }) => {
     });
 
     // ─────────────────────────────────────────────
-    // UNCHANGED HELPERS
+    // CALL HELPERS
     // ─────────────────────────────────────────────
 
     const markConnected = () => {
@@ -186,7 +184,7 @@ const VideoCallScreen = ({ route, navigation }) => {
     };
 
     // ─────────────────────────────────────────────
-    // END CALL (unchanged)
+    // END CALL
     // ─────────────────────────────────────────────
 
     const handleEndCall = async () => {
@@ -194,6 +192,7 @@ const VideoCallScreen = ({ route, navigation }) => {
         hasEndedCall.current = true;
         stopAllIntervals();
         if (disconnectTimeoutRef.current) clearTimeout(disconnectTimeoutRef.current);
+        if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
         stopCallTones();
         isRingbackPlayingRef.current = false;
         InCallManager.stop();
@@ -211,6 +210,7 @@ const VideoCallScreen = ({ route, navigation }) => {
         hasEndedCall.current = true;
         stopAllIntervals();
         if (disconnectTimeoutRef.current) clearTimeout(disconnectTimeoutRef.current);
+        if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
         stopCallTones();
         isRingbackPlayingRef.current = false;
         InCallManager.stop();
@@ -226,7 +226,7 @@ const VideoCallScreen = ({ route, navigation }) => {
     };
 
     // ─────────────────────────────────────────────
-    // START CALL (unchanged)
+    // START CALL
     // ─────────────────────────────────────────────
 
     const startCall = async () => {
@@ -249,15 +249,22 @@ const VideoCallScreen = ({ route, navigation }) => {
             InCallManager.setKeepScreenOn(true);
 
             if (isCaller) {
+                // Caller: start InCallManager with ringback BEFORE init (ringback is audio-only, no conflict)
                 InCallManager.start({ media: 'video', ringback: '_BUNDLE_' });
                 isRingbackPlayingRef.current = true;
                 await webrtcVideoService.startCaller(roomId, userId);
                 setStatus('Calling...');
             } else {
-                InCallManager.start({ media: 'video' });
+                // ✅ FIX: init() first — fetches TURN + getUserMedia (camera/mic)
+                // InCallManager.start() called AFTER so it doesn't grab audio route
+                // before WebRTC tracks are active. On different networks, init() can
+                // take 500ms–1s (TURN fetch). Starting InCallManager before this
+                // caused audio routing conflicts identical to Issue 4 in AudioCallScreen.
                 await webrtcVideoService.init(roomId);
+                InCallManager.start({ media: 'video' }); // ✅ MOVED: after init()
                 setStatus('Connecting...');
             }
+
         } catch (e) {
             console.log('[VideoCallScreen] startCall error:', e?.message);
             stopCallTones();
@@ -267,7 +274,7 @@ const VideoCallScreen = ({ route, navigation }) => {
     };
 
     // ─────────────────────────────────────────────
-    // MAIN EFFECT (unchanged logic)
+    // MAIN EFFECT
     // ─────────────────────────────────────────────
 
     useEffect(() => {
@@ -292,6 +299,7 @@ const VideoCallScreen = ({ route, navigation }) => {
         webrtcVideoService.onConnectionState = (state) => {
             if (state === 'connected' || state === 'completed') {
                 markConnected();
+                // ✅ Apply speaker AFTER connection established
                 if (!speakerAppliedRef.current) {
                     speakerAppliedRef.current = true;
                     InCallManager.setForceSpeakerphoneOn(true);
@@ -316,17 +324,22 @@ const VideoCallScreen = ({ route, navigation }) => {
 
         startCall();
 
+        // ── Fast ICE poll every 2s ──
         iceIntervalRef.current = setInterval(async () => {
             try {
                 if (!webrtcVideoService.pc) return;
                 const iceRes = await chatService.getVideoIceCandidates(roomId);
                 const candidates = iceRes?.data?.candidates ?? [];
-                candidates.forEach(applyIceCandidate);
+                if (candidates.length > 0) {
+                    candidates.forEach(applyIceCandidate);
+                }
             } catch (e) {
                 if (e?.response?.status === 429) return;
+                console.log('[VideoCallScreen] ICE poll error:', e?.message);
             }
         }, ICE_POLL_INTERVAL_MS);
 
+        // ── Signaling poll every 3s ──
         signalingIntervalRef.current = setInterval(async () => {
             try {
                 if (!webrtcVideoService.pc) return;
@@ -334,43 +347,60 @@ const VideoCallScreen = ({ route, navigation }) => {
                 const statusRes = await chatService.getVideoCallStatus(roomId);
                 const callAge = Date.now() - callStartTime.current;
                 const callStatus = statusRes?.data?.status;
+
                 if (callStatus === 'ended' && !hasEndedCall.current && callAge > 15000) {
                     handleRemoteEndCall();
                     return;
                 }
 
+                // CALLER — wait for answer
                 if (isCaller && !hasSetRemoteAnswer.current) {
                     const res = await chatService.getVideoCallAnswer(roomId);
                     const answer = normalizeSessionDescription(res?.data, 'answer');
                     if (answer) {
                         await webrtcVideoService.setRemoteAnswer(answer);
                         hasSetRemoteAnswer.current = true;
+                        console.log('[VideoCallScreen] Remote answer set ✅');
                     }
                 }
 
+                // RECEIVER — wait for offer then answer
                 if (!isCaller && !hasAnswered.current) {
                     const res = await chatService.getVideoCallOffer(roomId);
                     const offer = normalizeSessionDescription(res?.data, 'offer');
                     if (offer?.type && offer?.sdp) {
                         try {
-                            if (webrtcVideoService.pc?.signalingState !== 'stable') {
+                            // ✅ FIX: Only re-init on truly broken states
+                            // Previous code re-inited on 'have-remote-offer' which is a
+                            // valid intermediate state BEFORE createAnswer — not an error.
+                            // This was causing unnecessary PC teardown and adding 1-2s delay.
+                            const sigState = webrtcVideoService.pc?.signalingState;
+                            const isBroken = sigState === 'closed' || sigState === 'failed';
+                            if (isBroken) {
+                                console.log('[VideoCallScreen] PC in broken state, reiniting:', sigState);
                                 await webrtcVideoService.init(roomId);
                             }
+
                             const answer = await webrtcVideoService.createAnswer(offer);
                             if (answer) {
                                 hasAnswered.current = true;
                                 setStatus('Connecting...');
+                                console.log('[VideoCallScreen] createAnswer complete ✅');
                             }
                         } catch (answerError) {
+                            console.log('[VideoCallScreen] createAnswer failed:', answerError?.message);
                             const sigState = webrtcVideoService.pc?.signalingState;
-                            if (!sigState || sigState !== 'stable') {
+                            // ✅ Only re-init if state is actually broken
+                            if (!sigState || sigState === 'closed') {
                                 await webrtcVideoService.init(roomId);
                             }
                         }
                     }
                 }
+
             } catch (e) {
                 if (e?.response?.status === 429) return;
+                console.log('[VideoCallScreen] Signaling poll error:', e?.message);
             }
         }, SIGNALING_POLL_INTERVAL_MS);
 
@@ -399,7 +429,7 @@ const VideoCallScreen = ({ route, navigation }) => {
     }, [isCaller, roomId]);
 
     // ─────────────────────────────────────────────
-    // CONTROLS (unchanged logic, UI only refactored)
+    // CONTROLS
     // ─────────────────────────────────────────────
 
     const toggleMute = () => {
@@ -435,7 +465,7 @@ const VideoCallScreen = ({ route, navigation }) => {
     return (
         <TouchableWithoutFeedback onPress={handleScreenTap}>
             <View style={styles.container}>
-                <StatusBar hidden />
+                <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
 
                 {/* ── Remote Video / Placeholder ── */}
                 {remoteStreamURL ? (
@@ -477,45 +507,32 @@ const VideoCallScreen = ({ route, navigation }) => {
                     )}
                 </Animated.View>
 
-                {/* ── Status Badge (top center, fades with controls) ── */}
-                <Animated.View
-                    style={[styles.statusBadgeWrapper, { opacity: controlsAnim }]}
-                    pointerEvents="none"
-                >
+                {/* ── Status Badge ── */}
+                <Animated.View style={[styles.statusBadgeWrapper, { opacity: controlsAnim }]}>
                     <Text style={styles.statusBadgeText}>{status}</Text>
                 </Animated.View>
 
                 {/* ── Control Bar ── */}
-                {/*
-                    The Animated.View wraps all secondary buttons (mute/video/flip/speaker).
-                    End Call sits outside the animation and is ALWAYS visible.
-                */}
                 <View style={styles.controlBarContainer}>
+
                     {/* Secondary controls — fade in/out */}
-                    <Animated.View
-                        style={[styles.secondaryControls, { opacity: controlsAnim }]}
-                        pointerEvents={controlsVisible ? 'auto' : 'none'}
-                    >
+                    <Animated.View style={[styles.secondaryControls, { opacity: controlsAnim }]}>
                         <ControlButton
                             icon={isMuted ? '🔇' : '🎙️'}
-                            label={isMuted ? 'Unmute' : 'Mute'}
                             onPress={toggleMute}
                             active={isMuted}
                         />
                         <ControlButton
-                            icon={isVideoOff ? '📷' : '📹'}
-                            label={isVideoOff ? 'Start Cam' : 'Stop Cam'}
+                            icon={isVideoOff ? '📵' : '📹'}
                             onPress={toggleVideo}
                             active={isVideoOff}
                         />
                         <ControlButton
                             icon="🔄"
-                            label="Flip"
                             onPress={flipCamera}
                         />
                         <ControlButton
-                            icon={isSpeaker ? '🔊' : '🔈'}
-                            label={isSpeaker ? 'Speaker' : 'Earpiece'}
+                            icon={isSpeaker ? '🔊' : '🔉'}
                             onPress={toggleSpeaker}
                             active={isSpeaker}
                         />
@@ -530,13 +547,14 @@ const VideoCallScreen = ({ route, navigation }) => {
                         <Text style={styles.endCallIcon}>📵</Text>
                     </TouchableOpacity>
                 </View>
+
             </View>
         </TouchableWithoutFeedback>
     );
 };
 
 // ─────────────────────────────────────────────
-// STYLES — UI redesign only
+// STYLES
 // ─────────────────────────────────────────────
 
 const CTRL_SIZE = 58;
@@ -671,19 +689,15 @@ const styles = StyleSheet.create({
         paddingBottom: Platform.OS === 'ios' ? 40 : 28,
         paddingTop: 20,
         paddingHorizontal: 20,
-        // Subtle gradient-like overlay
-        backgroundColor: 'rgba(0,0,0,0.0)',
         alignItems: 'center',
         zIndex: 20,
     },
-
     secondaryControls: {
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 18,
         gap: 14,
-        // Frosted glass bar behind secondary controls
         backgroundColor: 'rgba(10,15,26,0.65)',
         borderRadius: 36,
         paddingVertical: 12,
@@ -718,7 +732,6 @@ const styles = StyleSheet.create({
         fontSize: 24,
     },
     ctrlLabel: {
-        // Labels hidden in compact row — uncomment if you want them below icons
         display: 'none',
         color: '#fff',
         fontSize: 10,

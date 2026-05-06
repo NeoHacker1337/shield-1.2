@@ -53,7 +53,7 @@ class WebRTCService {
         // ✅ Fetch fresh TURN credentials from backend before every call
         let iceServers = FALLBACK_ICE_SERVERS;
         try {
-            const res = await chatService.getTurnCredentials();
+            const res = await chatService.getAudioTurnCredentials();
             if (res?.data?.iceServers && Array.isArray(res.data.iceServers)) {
                 iceServers = res.data.iceServers;
                 console.log('[webrtcService] Fresh TURN credentials loaded ✅ count:', iceServers.length);

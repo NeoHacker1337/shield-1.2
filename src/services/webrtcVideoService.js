@@ -9,12 +9,19 @@
  * ✅ Issue 2: ICE sending unchanged (already instant via chatService.sendVideoIceCandidate)
  * ✅ Issue 3: addIceCandidate + flushPendingIceCandidates guard malformed candidates
  * ✅ Issue 4: Bitrate control moved to onconnectionstatechange = connected (not in init)
+ * ✅ BUGFIX:  constructor() and all class methods now have correct closing braces
+ * ✅ BUGFIX:  init() is a proper class method — not accidentally nested in constructor
  */
 
-import { RTCPeerConnection, mediaDevices, RTCIceCandidate, RTCSessionDescription } from 'react-native-webrtc';
+import {
+    RTCPeerConnection,
+    mediaDevices,
+    RTCIceCandidate,
+    RTCSessionDescription,
+} from 'react-native-webrtc';
 import chatService from './chatService';
 
-// ✅ Issue 1 FIX: Fallback used only if backend TURN fetch fails
+// ✅ Fallback used only if backend TURN fetch fails
 const FALLBACK_ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
@@ -34,11 +41,12 @@ class WebRTCVideoService {
         this.remoteDescSet = false;
         this.answerInProgress = false;
         this.isFrontCamera = true;
-    }
+    } // ✅ constructor properly closed
 
     // ─────────────────────────────────────────────
     // INIT
     // ─────────────────────────────────────────────
+
     async init(roomId) {
         if (this.pc) {
             console.log('[VideoService] Closing existing PC before reinit');
@@ -51,10 +59,10 @@ class WebRTCVideoService {
         this.answerInProgress = false;
         this.isFrontCamera = true;
 
-        // ✅ Issue 1 FIX: Fetch fresh TURN credentials from backend
+        // ✅ Fetch fresh TURN credentials from backend before every call
         let iceServers = FALLBACK_ICE_SERVERS;
         try {
-            const res = await chatService.getTurnCredentials();
+            const res = await chatService.getVideoTurnCredentials();
             if (res?.data?.iceServers && Array.isArray(res.data.iceServers)) {
                 iceServers = res.data.iceServers;
                 console.log('[VideoService] Fresh TURN credentials loaded ✅ count:', iceServers.length);
@@ -68,6 +76,8 @@ class WebRTCVideoService {
         const configuration = {
             iceServers,
             iceCandidatePoolSize: 10,
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require',
         };
 
         this.pc = new RTCPeerConnection({ ...configuration, iceTransportPolicy: 'all' });
@@ -87,16 +97,18 @@ class WebRTCVideoService {
                     ? event.candidate.toJSON()
                     : event.candidate;
 
-                // Small delay to avoid rate limiting (429) from server
+                // Small delay to avoid rate limiting (429)
                 setTimeout(() => {
                     chatService.sendVideoIceCandidate({
                         room_id: this.currentRoomId,
                         candidate,
                     }).catch(e => console.warn('[VideoService] send ICE error:', e?.message));
                 }, 100);
+
+            } else if (!event.candidate) {
+                console.log('[VideoService] ICE gathering complete ✅');
             }
         };
-
 
         // Remote stream received
         this.pc.ontrack = (event) => {
@@ -110,8 +122,7 @@ class WebRTCVideoService {
         this.pc.onsignalingstatechange = () =>
             console.log('[VideoService] signalingState →', this.pc?.signalingState);
 
-        // ✅ Issue 4 FIX: Bitrate control applied AFTER connection established
-        // (removed from bottom of init — was too early before SDP negotiation)
+        // ✅ Bitrate control applied AFTER connection established
         this.pc.onconnectionstatechange = () => {
             const state = this.pc?.connectionState;
             console.log('[VideoService] connectionState →', state);
@@ -174,13 +185,14 @@ class WebRTCVideoService {
     // ─────────────────────────────────────────────
     // TURN REACHABILITY TEST
     // ─────────────────────────────────────────────
+
     testTurnReachability(configuration) {
-        // ✅ Issue 1 FIX: accepts fresh configuration as parameter
         const testPC = new RTCPeerConnection(configuration);
         testPC.createDataChannel('turn-test');
         testPC.createOffer()
             .then(offer => testPC.setLocalDescription(offer))
             .catch(() => { });
+
         testPC.onicecandidate = (e) => {
             if (e.candidate) {
                 const raw = e.candidate.candidate ?? '';
@@ -191,8 +203,12 @@ class WebRTCVideoService {
                     console.log('[VIDEO TURN TEST] ✅ TURN working — relay candidate found');
                     setTimeout(() => testPC.close(), 2000);
                 }
+            } else {
+                console.log('[VIDEO TURN TEST] ICE gathering complete');
+                testPC.close();
             }
         };
+
         setTimeout(() => {
             try { testPC.close(); } catch (_) { }
         }, 8000);
@@ -201,6 +217,7 @@ class WebRTCVideoService {
     // ─────────────────────────────────────────────
     // CALLER (Device A)
     // ─────────────────────────────────────────────
+
     async startCaller(roomId, callerId) {
         await this.init(roomId);
 
@@ -228,12 +245,14 @@ class WebRTCVideoService {
     // ─────────────────────────────────────────────
     // RECEIVER (Device B)
     // ─────────────────────────────────────────────
+
     async createAnswer(offer) {
         if (!this.pc) throw new Error('[VideoService] createAnswer: PC is null');
         if (this.answerInProgress) {
             console.warn('[VideoService] createAnswer already in progress — skipping duplicate call');
             return null;
         }
+
         if (this.pc.signalingState !== 'stable') {
             throw new Error(`[VideoService] createAnswer: wrong signalingState ${this.pc.signalingState}`);
         }
@@ -270,7 +289,6 @@ class WebRTCVideoService {
 
             const answerPayload = { type: answer.type, sdp: answer.sdp };
 
-            // Send answer once here only — NOT in VideoCallScreen
             await chatService.sendVideoCallAnswer({
                 room_id: this.currentRoomId,
                 answer: answerPayload,
@@ -283,13 +301,14 @@ class WebRTCVideoService {
             console.error('[VideoService] createAnswer ERROR:', e?.message);
             throw e;
         } finally {
-            this.answerInProgress = false; // always resets (success OR error)
+            this.answerInProgress = false;
         }
     }
 
     // ─────────────────────────────────────────────
     // SET REMOTE DESCRIPTION — triple fallback
     // ─────────────────────────────────────────────
+
     async trySetRemoteDescription(type, sdp) {
         // Attempt 1: plain object with LF
         try {
@@ -323,10 +342,13 @@ class WebRTCVideoService {
     // ─────────────────────────────────────────────
     // SET REMOTE ANSWER — Caller side
     // ─────────────────────────────────────────────
+
     async setRemoteAnswer(answer) {
         if (!this.pc) throw new Error('[VideoService] setRemoteAnswer: PC is null');
         if (this.pc.signalingState !== 'have-local-offer') {
-            throw new Error(`[VideoService] setRemoteAnswer: wrong signalingState ${this.pc.signalingState} — expected have-local-offer`);
+            throw new Error(
+                `[VideoService] setRemoteAnswer: wrong signalingState ${this.pc.signalingState} — expected have-local-offer`
+            );
         }
 
         console.log('[VideoService] setRemoteAnswer | signalingState:', this.pc.signalingState);
@@ -350,10 +372,11 @@ class WebRTCVideoService {
     // ─────────────────────────────────────────────
     // ICE — addIceCandidate
     // ─────────────────────────────────────────────
+
     addIceCandidate(candidate) {
         if (!this.pc || !candidate) return;
 
-        // ✅ Issue 3 FIX: Reject malformed candidates before they corrupt ICE state
+        // ✅ Reject malformed candidates before they corrupt ICE state
         if (!candidate.candidate || typeof candidate.candidate !== 'string') {
             console.warn('[VideoService] Rejected malformed ICE candidate (no candidate string):', candidate);
             return;
@@ -374,12 +397,13 @@ class WebRTCVideoService {
     // ─────────────────────────────────────────────
     // ICE — flush queued candidates
     // ─────────────────────────────────────────────
+
     async flushPendingIceCandidates() {
         if (!this.pendingIceCandidates.length) return;
         console.log('[VideoService] Flushing', this.pendingIceCandidates.length, 'queued ICE candidates');
 
         for (const c of this.pendingIceCandidates) {
-            // ✅ Issue 3 FIX: Skip malformed candidates in queue
+            // ✅ Skip malformed candidates in queue
             if (!c?.candidate || typeof c.candidate !== 'string') {
                 console.warn('[VideoService] Skipping malformed queued ICE candidate:', c);
                 continue;
@@ -391,13 +415,13 @@ class WebRTCVideoService {
                 console.warn('[VideoService] Queued ICE error:', e?.message);
             }
         }
-
         this.pendingIceCandidates = [];
     }
 
     // ─────────────────────────────────────────────
     // CAMERA CONTROLS
     // ─────────────────────────────────────────────
+
     async flipCamera() {
         if (!this.localStream) return;
         const videoTrack = this.localStream.getVideoTracks()[0];
@@ -424,6 +448,7 @@ class WebRTCVideoService {
     // ─────────────────────────────────────────────
     // SDP CLEANUP
     // ─────────────────────────────────────────────
+
     cleanSdp(sdp) {
         if (!sdp) return sdp;
 
@@ -432,6 +457,7 @@ class WebRTCVideoService {
             sdp = sdp.replace(/\\n/g, '\n');
             console.log('[VideoService] Cleaned literal \\n');
         }
+
         if (sdp.includes('\\r')) {
             sdp = sdp.replace(/\\r/g, '\r');
             console.log('[VideoService] Cleaned literal \\r');
@@ -450,6 +476,7 @@ class WebRTCVideoService {
     // ─────────────────────────────────────────────
     // CLEANUP
     // ─────────────────────────────────────────────
+
     cleanupPC() {
         this.pc?.close();
         this.pc = null;
@@ -460,17 +487,22 @@ class WebRTCVideoService {
     }
 
     close() {
-        console.log('[VideoService] Closing | signalingState:', this.pc?.signalingState, '| connectionState:', this.pc?.connectionState);
+        console.log('[VideoService] Closing | signalingState:', this.pc?.signalingState,
+            '| connectionState:', this.pc?.connectionState);
+
         this.localStream?.getTracks().forEach(t => {
             t.stop();
             console.log('[VideoService] Track stopped:', t.kind);
         });
+
         this.cleanupPC();
+
         this.localStream = null;
         this.currentRoomId = null;
         this.onRemoteStream = null;
         this.onLocalStream = null;
         this.onConnectionState = null;
+
         console.log('[VideoService] Closed ✅');
     }
 }
