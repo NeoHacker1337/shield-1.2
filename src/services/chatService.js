@@ -190,7 +190,13 @@ const chatService = {
 
 
   getUserById: (userId) => api.get(`/users/${userId}`),
-  
+
+
+  getTurnCredentials: () => {
+    return api.get('/v1/video-call/turn-credentials');
+  },
+
+
 };
 
 export default chatService;
